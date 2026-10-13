@@ -179,6 +179,7 @@ async def test_transient_gateway_failure_is_retried_once(
         "interpret",
         "generate",
         "generate",
+        "validate",
     ]
 
 

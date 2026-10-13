@@ -6,6 +6,13 @@ from app.modules.conversations.schemas import AgendaOperation, QuestionGoal
 from app.modules.memory.schemas import EntityCandidate, MemoryOperation
 
 
+class CurrentTimeRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    location: str = Field(min_length=1, max_length=120)
+    source_message_id: str = Field(min_length=1, max_length=120)
+    timezone: str | None = Field(default=None, min_length=1, max_length=100)
+
+
 class TurnInterpretation(BaseModel):
     model_config = ConfigDict(extra="forbid")
     intent: str
@@ -20,6 +27,10 @@ class TurnInterpretation(BaseModel):
         "service",
     ]
     language: str
+    continue_conversation: bool = False
+    current_time_requests: list[CurrentTimeRequest] = Field(
+        default_factory=list, max_length=5
+    )
     referenced_message_ids: list[str] = Field(default_factory=list)
     needs_clarification: bool = False
     entities: list[EntityCandidate] = Field(default_factory=list)
@@ -57,6 +68,7 @@ class ReplyProposal(BaseModel):
     new_commitment_candidate: str | None = None
     followup_allowed: bool = False
     platform_transition: bool = False
+    platform_notice: str | None = Field(default=None, min_length=1, max_length=400)
 
     @property
     def parts(self) -> tuple[str, ...]:
@@ -82,8 +94,6 @@ class ContinuingReplyProposal(ReplyProposal):
 
 
 class RecoveryReplyProposal(ReplyProposal):
-    continuation: None = None
-    followup_allowed: Literal[False] = False
     requested_action: Literal["none"] = "none"
 
 
@@ -120,7 +130,7 @@ class ContextManifest(BaseModel):
     input_revision: int
     control_revision: int
     memory_revision: int
-    policy_version: str = "mvp-2026-10-13-dialogue-v21-recall-trust"
+    policy_version: str = "mvp-2026-10-14-marko-initiative"
     persona_version: str = "marko-v1"
     model_id: str
     messages: list[dict[str, Any]]

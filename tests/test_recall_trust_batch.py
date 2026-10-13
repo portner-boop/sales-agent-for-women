@@ -161,7 +161,7 @@ async def test_rejected_knowledge_answer_is_repaired_before_delivery(
     assert any(task == "validate_repair" for task, _ in app.model.calls)
 
 
-async def test_short_nonquestion_reaction_keeps_existing_fast_path(
+async def test_short_nonquestion_reaction_requires_semantic_validation(
     app: Application,
 ) -> None:
     app.model.responses["generate"].append(
@@ -170,7 +170,7 @@ async def test_short_nonquestion_reaction_keeps_existing_fast_path(
     await app.telegram.ingest([update(1, "Blue is a lovely color")])
     await app.drain()
     assert app.sender.sent == [(1, "Blue looks calm")]
-    assert not any(task == "validate" for task, _ in app.model.calls)
+    assert any(task == "validate" for task, _ in app.model.calls)
 
 
 async def test_verification_request_without_question_mark_is_checked(

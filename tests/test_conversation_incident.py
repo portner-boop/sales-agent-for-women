@@ -75,7 +75,7 @@ async def test_incident_repeated_rejection_has_grounded_last_resort(
     )
 
 
-async def test_recovery_drops_required_hook_and_remains_independently_checked(
+async def test_recovery_keeps_required_hook_and_remains_independently_checked(
     app: Application,
 ) -> None:
     for task in ("generate", "repair"):
@@ -91,41 +91,51 @@ async def test_recovery_drops_required_hook_and_remains_independently_checked(
             {"decision": "reject", "reason_codes": ["INVENTED_PERSONA_CIRCUMSTANCE"]}
         )
     app.model.responses["recover"].append(
-        {"reply": "Нормально", "dialogue_act": "answer"}
+        {
+            "reply": "Настроение хорошее, хочется поболтать",
+            "continuation": "Как твой день?",
+            "dialogue_act": "chat",
+            "question_goal": "day",
+            "question_part": "continuation",
+            "followup_allowed": True,
+        }
     )
     await app.telegram.ingest([update(1, "А ты как?")])
     await app.drain()
-    assert app.sender.sent == [(1, "Нормально")]
+    app.clock.advance(4)
+    await app.drain()
+    assert app.sender.sent == [
+        (1, "Настроение хорошее, хочется поболтать"),
+        (1, "Как твой день?"),
+    ]
     recover = next(data for task, data in app.model.calls if task == "recover")
-    assert not recover["DIALOGUE_PLAN"]["requires_continuation"]
+    assert recover["DIALOGUE_PLAN"]["requires_continuation"]
     assert app.model.calls[-1][0] == "validate_recovery"
     assert await scalar(app, "SELECT status FROM agent_runs") == "prepared"
     metadata = json.loads(
         await scalar(app, "SELECT proposal_json FROM outbox_messages")
     )
-    assert not metadata["followup_allowed"]
+    assert metadata["followup_allowed"]
 
 
-async def test_recovery_retries_unwanted_continuation_instead_of_sending_it(
+async def test_recovery_preserves_valid_continuation_after_interpretation_failure(
     app: Application,
 ) -> None:
     app.model.responses["interpret"].append(ValueError("bad interpretation"))
-    app.model.responses["recover"].extend(
-        [
-            {
-                "reply": "Нормально",
-                "continuation": "Как твой день?",
-                "dialogue_act": "chat",
-            },
-            {"reply": "Нормально", "dialogue_act": "answer"},
-        ]
+    app.model.responses["recover"].append(
+        {
+            "reply": "Нормально",
+            "continuation": "Как твой день?",
+            "dialogue_act": "chat",
+        }
     )
     await app.telegram.ingest([update(1, "Как ты?")])
     await app.drain()
-    assert app.sender.sent == [(1, "Нормально")]
+    app.clock.advance(4)
+    await app.drain()
+    assert app.sender.sent == [(1, "Нормально"), (1, "Как твой день?")]
     assert [task for task, _ in app.model.calls] == [
         "interpret",
-        "recover",
         "recover",
         "validate_recovery",
     ]

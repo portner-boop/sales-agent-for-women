@@ -210,7 +210,11 @@ async def test_nonmutating_memory_operation_does_not_trigger_patch_validation(
     )
     await app.telegram.ingest([update(1, "ok")])
     await app.drain()
-    assert [task for task, _ in app.model.calls] == ["interpret", "generate"]
+    assert [task for task, _ in app.model.calls] == [
+        "interpret",
+        "generate",
+        "validate",
+    ]
     assert await scalar(app, "SELECT COUNT(*) FROM memory_items") == 0
     assert (
         await scalar(app, "SELECT COUNT(*) FROM said_ledger WHERE action_kind='reply'")

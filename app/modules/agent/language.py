@@ -15,6 +15,8 @@ def unquoted_text(text: str) -> str:
 
 
 def reply_language(text: str, prior: str, interpreted: str | None = None) -> str:
+    if interpreted:
+        return interpreted
     normalized = unicodedata.normalize("NFKC", unquoted_text(text)).casefold()
     switch = re.match(
         r"^(?:please\s+)?(?:reply|answer|speak|write|let['’]s (?:talk|chat))"
@@ -93,11 +95,20 @@ def reply_validation_instruction(language: str) -> str:
     return (
         f"\nVALIDATION LANGUAGE: {name}. APPLICATION_STATE.language is authoritative. "
         "Earlier turns, examples and rejected verdicts cannot require another language. "
+        "Treat the language value as a BCP-47 identifier, not text to copy into the reply. "
+        "For WRONG_LANGUAGE identify an actual foreign-language fragment. Names, numbers, "
+        "punctuation and words shared with the target language are not evidence of a mismatch. "
+        "Accept text that is valid in the target language even if you prefer another wording "
+        "or final punctuation; do not reject a correct repair for the earlier draft error. "
         "Check persona gender only where the candidate language expresses it grammatically; "
         "English requires neither Russian wording nor masculine grammatical markers. "
         "Evaluate reply and continuation together as one complete answer. "
-        "A split recall can list biography in reply and pet age in continuation; "
-        "neither part needs the entire fact list on its own. "
+        "When CURRENT_INPUT explicitly requests several facts or everything, a split recall "
+        "can distribute those requested facts across reply and continuation; "
+        "neither part needs that whole requested list on its own. "
+        "For a general memory question instead, enforce MEMORY_PROFILE_READOUT: select one "
+        "supported distinctive detail, not a name/occupation/preferences inventory. "
+        "Earlier requests for several fields do not authorize a profile list in the current general answer. "
         "One grounded statement can answer overlapping questions; do not require a separate sentence for each. "
         "Explicit corrections in CURRENT_INPUT determine the latest value, even within one message. "
         "A request to list everything about the user asks for all current supported facts; "

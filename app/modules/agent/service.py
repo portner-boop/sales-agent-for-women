@@ -40,6 +40,7 @@ from app.modules.agent.prompts import (
     MEMORY_VALIDATOR_RULES,
     PLATFORM_TRANSITION_RULES,
     VALIDATOR_RULES,
+    platform_turn_instruction,
 )
 from app.modules.agent.recovery import (
     activity_reply,
@@ -59,7 +60,7 @@ from app.modules.agent.schemas import (
 )
 from app.modules.agent.style import refine_day_question, strip_terminal_period
 from app.modules.agent.time import standalone_time_reply
-from app.modules.agent.validation import needs_semantic_validation, validate_reply
+from app.modules.agent.validation import validate_reply
 from app.modules.commerce.requests import (
     declines_platform_link,
     platform_request_language,
@@ -183,13 +184,13 @@ class AgentService:
     ) -> SchemaT:
         if task in {"generate", "repair", "recover", "followup"}:
             rules += language_instruction(data["APPLICATION_STATE"]["language"])
+            rules += platform_turn_instruction(data.get("PLATFORM_TRANSITION", {}))
         elif task in {"validate", "validate_repair", "validate_recovery"}:
-            rules = (
-                reply_validation_instruction(
-                    data["context"]["APPLICATION_STATE"]["language"]
-                )
-                + "\n"
-                + rules
+            rules += reply_validation_instruction(
+                data["context"]["APPLICATION_STATE"]["language"]
+            )
+            rules += platform_turn_instruction(
+                data["context"].get("PLATFORM_TRANSITION", {})
             )
         for attempt in range(2):
             current = await self.conversation_service.current(run.turn)
@@ -490,13 +491,6 @@ class AgentService:
                     raise ValueError("Invalid retry request time")
                 received_at = max(received_at, retry_requested_at)
             queued = max(0, self.clock.now() - received_at)
-            if (
-                self.settings.reply_pacing_enabled
-                and conversation.first_reply_at is None
-            ):
-                limit = min(
-                    limit, max(0, self.settings.first_reply_max_seconds - queued)
-                )
             run = ActiveRun(
                 turn,
                 conversation,
@@ -684,14 +678,6 @@ class AgentService:
     async def _interpret(self, state: GraphState) -> dict[str, str]:
         run = self.active[state["run_id"]]
         text = " ".join(message.text for message in run.turn.messages)
-        time_reply = self._time_reply(run)
-        if time_reply is not None:
-            run.interpretation = TurnInterpretation(
-                intent="current_time",
-                dialogue_mode="service",
-                language=self._input_language(run),
-            )
-            return {"phase": "interpreted"}
         if self._standalone_photo_request(run):
             run.interpretation = TurnInterpretation(
                 intent="photo_request",
@@ -866,10 +852,6 @@ class AgentService:
     async def _generate(self, state: GraphState) -> dict[str, str]:
         run = self.active[state["run_id"]]
         assert run.context is not None
-        time_reply = self._time_reply(run)
-        if time_reply is not None:
-            run.proposal = ReplyProposal(reply=time_reply, dialogue_act="current_time")
-            return {"phase": "generated"}
         if self._standalone_photo_request(run):
             run.proposal = ReplyProposal(
                 reply=photo_refusal(run.conversation.language),
@@ -889,18 +871,8 @@ class AgentService:
         )
         return {"phase": "generated"}
 
-    async def _check_proposal(
-        self, run: ActiveRun, stage: str, task: str, force_semantic: bool = False
-    ) -> list[str]:
+    async def _check_proposal(self, run: ActiveRun, stage: str, task: str) -> list[str]:
         assert run.context and run.proposal and run.interpretation
-        time_reply = self._time_reply(run)
-        if time_reply is not None:
-            run.proposal = ReplyProposal(reply=time_reply, dialogue_act="current_time")
-            run.context.data["DIALOGUE_PLAN"]["requires_continuation"] = False
-            run.validation_events.append({"stage": stage + "_server_time"})
-            return []
-        if run.recovering:
-            run.context.data["DIALOGUE_PLAN"]["requires_continuation"] = False
         if self._standalone_photo_request(run):
             run.proposal = ReplyProposal(
                 reply=photo_refusal(run.conversation.language),
@@ -969,9 +941,6 @@ class AgentService:
                     "platform_transition": True,
                     "requested_action": "none",
                     "dialogue_act": "platform_redirect",
-                    "question_goal": None,
-                    "question_part": None,
-                    "followup_allowed": False,
                 }
             )
         if run.proposal.question_goal:
@@ -986,12 +955,7 @@ class AgentService:
             )
         errors = validate_reply(run.proposal, run.context)
         run.validation_events.append({"stage": stage + "_static", "errors": errors})
-        if not errors and (
-            force_semantic
-            or run.proposal.platform_transition
-            or run.followup is not None
-            or needs_semantic_validation(run.proposal, run.interpretation, run.context)
-        ):
+        if not errors:
             verdict = await self._call(
                 run,
                 task,
@@ -1067,13 +1031,12 @@ class AgentService:
                 )
                 await self._build_context(run)
             assert run.context is not None
-            run.context.data["DIALOGUE_PLAN"]["requires_continuation"] = False
             run.proposal = await self._call(
                 run,
                 "recover",
                 GENERATOR_RULES
                 + PLATFORM_TRANSITION_RULES
-                + "\nRECOVERY: Return one concise answer to the actual current input using originals and active boundaries. continuation=null, followup_allowed=false, requested_action=none. This recovery contract overrides ordinary layout and initiative guidance. Do not add a new topic, reciprocal question, invitation or hook. A question is allowed only when the current request cannot be understood without one concrete clarification and boundaries allow it; otherwise question_goal=null and question_part=null. Do not invent details or claim a rejected memory patch was stored. Avoid rejected claims entirely. For questions about your day or activity, answering within the current chat is legitimate; do not invent off-screen events or all-day availability. No generic error apology, service paragraph or invented excuse. This candidate will be independently checked.",
+                + "\nRECOVERY: Answer the actual current input using the supplied originals and active boundaries. Correct the concrete rejected claim while preserving supported content, Marko's personality and the intended conversational move. A relevant question, continuation and followup_allowed=true remain valid in an open conversation; a previous failed draft is not a user request for silence. requested_action=none. Do not repeat the failed claim, invent facts, claim rejected memory was stored, or add a service-error apology. If evidence is insufficient, ask one useful clarification when allowed. The current platform contract still applies. This candidate will be independently checked.",
                 {
                     **run.context.data,
                     "RECOVERY_FAILURE": failure_code(error),
@@ -1092,9 +1055,7 @@ class AgentService:
                 },
                 self._reply_schema(run),
             )
-            errors = await self._check_proposal(
-                run, "recovery", "validate_recovery", force_semantic=True
-            )
+            errors = await self._check_proposal(run, "recovery", "validate_recovery")
             if errors:
                 raise ReplyRejectedError("Recovery rejected: " + ",".join(errors))
             await self._prepare(
@@ -1176,10 +1137,12 @@ class AgentService:
                 if proposal.platform_transition and not allowed and not limit_required:
                     raise StaleStateError("Platform transition is not allowed")
                 text = (
-                    self.commerce.transition_text(current.language, proposal.full_reply)
+                    self.commerce.transition_text(
+                        current.language, proposal.full_reply, proposal.platform_notice
+                    )
                     if allowed
                     else self.commerce.farewell_text(
-                        current.language, proposal.full_reply
+                        current.language, proposal.full_reply, proposal.platform_notice
                     )
                 )
                 origin = "platform_redirect" if allowed else "preview_closing"

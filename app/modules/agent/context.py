@@ -16,7 +16,7 @@ from app.modules.agent.schemas import (
     ReplyProposal,
     TurnInterpretation,
 )
-from app.modules.agent.time import current_time_facts
+from app.modules.agent.time import current_time_facts, resolve_current_times
 from app.modules.conversations.entities import Conversation, Message, Turn
 from app.modules.conversations.repository import ConversationRepository
 from app.modules.memory.entities import MemoryView
@@ -288,7 +288,7 @@ class ContextBuilder:
             for item in view.boundaries
         )
         requires_continuation = (
-            reciprocal
+            (reciprocal or interpretation.continue_conversation)
             and not any(message.metadata.get("forwarded") for message in turn.messages)
             and questions_allowed
             and interpretation.dialogue_mode not in {"closing", "repair", "service"}
@@ -363,16 +363,22 @@ class ContextBuilder:
             ):
                 sources.append(message.as_data())
         permissions = interpretation.requested_persona_fields
-        data: dict[str, Any] = {
-            "PERSONA_PROJECTION": persona_projection(permissions, self.clock.now()),
-            "CURRENT_TIME_FACTS": current_time_facts(
+        time_facts, unresolved_times = resolve_current_times(
+            interpretation.current_time_requests, turn.messages, self.clock.now()
+        )
+        if not interpretation.current_time_requests:
+            time_facts = current_time_facts(
                 " ".join(
                     message.text
                     for message in turn.messages
                     if not message.metadata.get("forwarded")
                 ),
                 self.clock.now(),
-            ),
+            )
+        data: dict[str, Any] = {
+            "PERSONA_PROJECTION": persona_projection(permissions, self.clock.now()),
+            "CURRENT_TIME_FACTS": time_facts,
+            "UNRESOLVED_TIME_REQUESTS": unresolved_times,
             "CHAT_CAPABILITIES": {"can_send_photos": False, "text_only": True},
             "APPLICATION_STATE": {
                 "control": conversation.control_state,

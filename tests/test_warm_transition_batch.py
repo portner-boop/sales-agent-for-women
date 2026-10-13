@@ -4,7 +4,7 @@ import pytest
 
 from app.application import Application
 from app.modules.commerce.service import PLATFORM_URL
-from tests.helpers import conversation, scalar, update
+from tests.helpers import PLATFORM_INVITATION_EN, conversation, scalar, update
 from tests.test_platform_transition import seed_count
 
 
@@ -14,12 +14,12 @@ from tests.test_platform_transition import seed_count
         (
             "Can you give me your WhatsApp?",
             "I don't share any contact. Let's keep it here",
-            "I’m happy to get to know you here. I don’t have a personal WhatsApp to share",
+            "We’ve only just met. Let’s get to know each other here",
         ),
         (
             "Can we meet next weekend?",
             "I don't do real-life meetings",
-            "I’d be glad to get to know you here, though I can’t meet in person",
+            "We’ve only just met. I’d rather get to know you here",
         ),
     ],
 )
@@ -43,7 +43,12 @@ async def test_answer_precedes_invitation_in_one_message(
     await seed_count(app, count)
     answer = "Right now I’m enjoying our conversation"
     app.model.responses["generate"].append(
-        {"reply": answer, "dialogue_act": "answer", "platform_transition": voluntary}
+        {
+            "reply": answer,
+            "dialogue_act": "answer",
+            "platform_notice": PLATFORM_INVITATION_EN,
+            "platform_transition": voluntary,
+        }
     )
     await app.telegram.ingest([update(2, "What’s new with you?")])
     await app.drain()
@@ -78,6 +83,7 @@ async def test_two_part_answer_survives_transition(app: Application) -> None:
             "reply": "I’m reading your message",
             "continuation": "And quiet music is my preference",
             "dialogue_act": "answer",
+            "platform_notice": PLATFORM_INVITATION_EN,
         }
     )
     await app.telegram.ingest(
@@ -101,13 +107,23 @@ async def test_rejected_answer_is_repaired_before_invitation(
 ) -> None:
     await seed_count(app, 19)
     app.model.responses["generate"].append(
-        {"reply": candidate, "dialogue_act": "answer"}
+        {
+            "reply": candidate,
+            "dialogue_act": "answer",
+            "platform_notice": PLATFORM_INVITATION_EN,
+        }
     )
     app.model.responses["validate"].append(
         {"decision": "reject", "reason_codes": [reason]}
     )
     answer = "Right now I’m reading your messages"
-    app.model.responses["repair"].append({"reply": answer, "dialogue_act": "answer"})
+    app.model.responses["repair"].append(
+        {
+            "reply": answer,
+            "dialogue_act": "answer",
+            "platform_notice": PLATFORM_INVITATION_EN,
+        }
+    )
     await app.telegram.ingest([update(2, "What have you been doing?")])
     await app.drain()
     assert app.sender.sent[-1][1] == app.commerce.transition_text("en", answer)
@@ -123,11 +139,16 @@ async def test_model_cannot_hide_unsupported_source_in_transition(
         {
             "reply": "Your favorite music is jazz",
             "dialogue_act": "answer",
+            "platform_notice": PLATFORM_INVITATION_EN,
             "used_source_message_ids": ["invented-id"],
         }
     )
     app.model.responses["repair"].append(
-        {"reply": "I don’t know your music preference yet", "dialogue_act": "answer"}
+        {
+            "reply": "I don’t know your music preference yet",
+            "dialogue_act": "answer",
+            "platform_notice": PLATFORM_INVITATION_EN,
+        }
     )
     await app.telegram.ingest([update(2, "What music do I like?")])
     await app.drain()

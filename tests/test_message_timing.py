@@ -12,7 +12,13 @@ from app.modules.delivery.repository import DeliveryRepository
 from app.modules.delivery.timing import message_delay
 from app.shared.config import RuntimeSettings, load_settings
 from app.shared.storage import Database, Transaction, fetchall, fetchone
-from tests.helpers import FakeSender, conversation, scalar, update
+from tests.helpers import (
+    PLATFORM_INVITATION_EN,
+    FakeSender,
+    conversation,
+    scalar,
+    update,
+)
 
 
 @pytest.fixture
@@ -143,9 +149,16 @@ async def test_single_message_is_not_sent_before_its_length_based_due_time(
     assert app.sender.sent == [(1, "a" * length)]
 
 
-@pytest.mark.parametrize("length,elapsed", [(13, 0), (140, 0), (140, 6), (13, 9)])
-async def test_first_response_includes_generation_time_in_ten_second_limit(
-    paced_app: Application, monkeypatch: pytest.MonkeyPatch, length: int, elapsed: float
+@pytest.mark.parametrize("first", [False, True])
+@pytest.mark.parametrize(
+    "length,elapsed", [(13, 0), (140, 0), (140, 6), (13, 9), (13, 18), (140, 70)]
+)
+async def test_generation_counts_toward_pacing_without_delaying_overdue_answers(
+    paced_app: Application,
+    monkeypatch: pytest.MonkeyPatch,
+    length: int,
+    elapsed: float,
+    first: bool,
 ) -> None:
     app = paced_app
     started = app.clock.now()
@@ -163,13 +176,36 @@ async def test_first_response_includes_generation_time_in_ten_second_limit(
         return await complete(task, rules, data, schema, deadline_seconds)
 
     monkeypatch.setattr(app.model, "complete", slow)
-    rows = await prepare(app, (length,), first=True)
-    expected = max(elapsed, min(10, max(5, 3 + length / 3)))
+    rows = await prepare(app, (length,), first=first)
+    target = min(10 if first else 60, max(5, 3 + length / 3))
+    expected = max(elapsed, target)
     assert rows[0]["created_at"] - started == pytest.approx(expected)
-    assert rows[0]["created_at"] - started <= 10
+    assert rows[0]["message_delay_seconds"] == pytest.approx(max(0, target - elapsed))
 
 
-async def test_queue_time_reduces_first_generation_budget(
+async def test_ten_second_cap_only_applies_until_first_reply_is_delivered(
+    paced_app: Application,
+) -> None:
+    app = paced_app
+    started = app.clock.now()
+    first = (await prepare(app, (140,), first=True))[0]
+    assert first["created_at"] - started == 10
+    app.clock.advance(10)
+    await app.delivery.run_once()
+    assert (await conversation(app)).first_reply_at == app.clock.now()
+    app.model.responses["generate"].append(
+        {"reply": "c" * 140, "dialogue_act": "answer"}
+    )
+    await app.telegram.ingest([update(2, "Tell me more")])
+    received_at = app.clock.now()
+    await app.turn_worker.run_once()
+    due = await scalar(
+        app, "SELECT created_at FROM outbox_messages ORDER BY rowid DESC LIMIT 1"
+    )
+    assert due - received_at == pytest.approx(3 + 140 / 3)
+
+
+async def test_queue_time_does_not_turn_pacing_target_into_generation_deadline(
     paced_app: Application, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     app = paced_app
@@ -190,7 +226,9 @@ async def test_queue_time_reduces_first_generation_budget(
 
     monkeypatch.setattr(app.model, "complete", record)
     await app.turn_worker.run_once()
-    assert timeouts and all(0 < timeout <= 6 for timeout in timeouts)
+    assert timeouts and all(
+        6 < timeout <= app.agent.settings.llm_attempt_seconds for timeout in timeouts
+    )
 
 
 async def test_each_part_waits_from_actual_previous_delivery_and_restart_keeps_delay(
@@ -445,7 +483,12 @@ async def test_platform_transition_uses_length_of_final_text_with_link(
 
     await app.database.write(eligible)
     app.model.responses["generate"].append(
-        {"reply": "a" * 60, "dialogue_act": "answer", "platform_transition": True}
+        {
+            "reply": "a" * 60,
+            "dialogue_act": "answer",
+            "platform_transition": True,
+            "platform_notice": PLATFORM_INVITATION_EN,
+        }
     )
     await app.telegram.ingest([update(2, "What’s new with you?")])
     received_at = app.clock.now()

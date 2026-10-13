@@ -5,6 +5,7 @@ import pytest
 from app.application import Application
 from app.modules.agent.entities import SchemaT
 from app.modules.agent.language import reply_validation_instruction
+from app.modules.agent.prompts import platform_turn_instruction
 from tests.helpers import conversation, scalar, update
 
 COMPOUND_INPUT = (
@@ -108,7 +109,10 @@ async def test_compound_recall_uses_current_language_through_every_validation_st
     ) -> SchemaT:
         if task in {"validate", "validate_repair", "validate_recovery"}:
             assert data["context"]["APPLICATION_STATE"]["language"] == "en"
-            assert rules.startswith(reply_validation_instruction("en"))
+            assert rules.endswith(
+                reply_validation_instruction("en")
+                + platform_turn_instruction(data["context"]["PLATFORM_TRANSITION"])
+            )
             assert data["reply"]["used_source_message_ids"] == [original_id]
             checked.append(task)
         return await complete(task, rules, data, schema, deadline_seconds)

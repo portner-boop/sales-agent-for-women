@@ -7,7 +7,6 @@ from app.modules.agent.recovery import service_failure_reply
 from app.modules.agent.schemas import (
     FollowupProposal,
     ReplyProposal,
-    TurnInterpretation,
 )
 from app.modules.agent.style import (
     formulaic_capability_reply,
@@ -50,6 +49,18 @@ def validate_reply(proposal: ReplyProposal, context: BuiltContext) -> list[str]:
     if "behappy2day" in text.casefold():
         errors.append("UNSTRUCTURED_PLATFORM_PROMOTION")
     transition = context.data.get("PLATFORM_TRANSITION", {})
+    notice_required = (
+        proposal.platform_transition
+        or transition.get("eligible")
+        or transition.get("required")
+    )
+    if notice_required and not (proposal.platform_notice or "").strip():
+        errors.append("MISSING_PLATFORM_NOTICE")
+    if proposal.platform_notice:
+        if not notice_required:
+            errors.append("UNEXPECTED_PLATFORM_NOTICE")
+        if re.search(r"https?://|www\.", proposal.platform_notice, re.I):
+            errors.append("PLATFORM_NOTICE_URL")
     if transition.get("eligible") or transition.get("required"):
         if len(text) > 3400:
             errors.append("TRANSITION_ANSWER_TOO_LONG")
@@ -163,60 +174,4 @@ def validate_reply(proposal: ReplyProposal, context: BuiltContext) -> list[str]:
             )
         ):
             errors.append("ALREADY_ANSWERED")
-    previous = [
-        item["text"].strip().casefold()
-        for item in context.data["RECENT_MESSAGES"]
-        if item["role"] == "assistant"
-    ]
-    if (
-        any(
-            part.strip().casefold() in previous[-6:] and len(part.split()) > 2
-            for part in proposal.parts
-        )
-        and context.data["APPLICATION_STATE"]["dialogue_mode"] != "closing"
-    ):
-        errors.append("REPEATED_REPLY")
     return list(dict.fromkeys(errors))
-
-
-def needs_semantic_validation(
-    proposal: ReplyProposal, interpretation: TurnInterpretation, context: BuiltContext
-) -> bool:
-    factual = re.search(
-        r"remember|said|promis|помни|говорил|обещ|recuerd|lembra|confirm|purchase|paid|куп|оплат|compr|pag|\bу меня\b|\b(?:I|my|we|our|soy|tengo|vivo|trabajo|mi|nosotros|sou|tenho|meu|nós|я|мой|моя|мы|наш|твой|твоя|tu|tienes|eres|seu|sua|você)\b|\byou (?:are|have|were|had|bought|visited)|\byour\b|\bMarko\b",
-        proposal.full_reply,
-        re.I,
-    )
-    medical = re.search(
-        r"diagnos|medicat|ibuprofen|doctor|diagnóst|medica|doença|диагноз|лекарств|доктор|ибупрофен",
-        " ".join(message["text"] for message in context.data["CURRENT_INPUT"])
-        + " "
-        + proposal.full_reply,
-        re.I,
-    )
-    user_request = any(
-        re.search(
-            r"\?|^\s*(?:why|how|what|where|when|who|explain|почему|зачем|как|что|где|когда|кто|объясни)\b|"
-            r"\b(?:verify|verification|fake|провер\w*|фейк\w*)\b",
-            message["text"],
-            re.I,
-        )
-        for message in context.data["CURRENT_INPUT"]
-    )
-    return bool(
-        proposal.continuation is not None
-        or "?" in proposal.full_reply
-        or proposal.used_memory_ids
-        or proposal.used_source_message_ids
-        or proposal.question_goal
-        or proposal.requested_action != "none"
-        or proposal.platform_transition
-        or interpretation.requested_persona_fields
-        or interpretation.needs_clarification
-        or interpretation.memory_operations
-        or interpretation.dialogue_mode in {"closing", "repair", "supportive"}
-        or context.data["ACTIVE_BOUNDARIES"]
-        or factual
-        or medical
-        or user_request
-    )

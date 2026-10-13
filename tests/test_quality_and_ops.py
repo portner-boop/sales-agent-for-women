@@ -55,7 +55,7 @@ async def test_style_repair_is_bounded_and_accepted(app: Application) -> None:
     await app.telegram.ingest([update(1, "hello")])
     await app.drain()
     assert app.sender.sent[0][1] == "Glad to hear that"
-    assert len(app.model.calls) == 3
+    assert len(app.model.calls) == 4
 
 
 @pytest.mark.parametrize(
@@ -314,7 +314,7 @@ async def test_runs_store_compact_checkpoint_references_without_prompts(
         data = await cursor.fetchall()
         assert all(b"confidential-dialogue-marker" not in row[0] for row in data)
     metrics = json.loads(await scalar(app, "SELECT metrics_json FROM agent_runs"))
-    assert metrics["llm_calls"] == 2
+    assert metrics["llm_calls"] == 3
 
 
 async def test_rhetorical_reaction_has_no_agenda_goal_and_is_critically_checked(
@@ -356,4 +356,4 @@ async def test_information_question_without_goal_cannot_bypass_critic(
         if event["stage"] == "draft_semantic"
     )
     assert verdict["reason_codes"] == ["MISSING_QUESTION_GOAL"]
-    assert metrics["llm_calls"] <= 4
+    assert metrics["llm_calls"] <= 5

@@ -1,6 +1,11 @@
 import re
+import unicodedata
+from collections.abc import Sequence
 from datetime import UTC, datetime
-from zoneinfo import ZoneInfo
+from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
+
+from app.modules.agent.schemas import CurrentTimeRequest
+from app.modules.conversations.entities import Message
 
 PLACE_PATTERNS = {
     "Split": r"\b(?:split|сплит(?:е|а)?)\b",
@@ -48,3 +53,48 @@ def standalone_time_reply(text: str, timestamp: float, language: str) -> str | N
         city = {"Split": "Сплите", "Zagreb": "Загребе"}[fact["city"]]
         return f"В {city} сейчас {fact['local_time']}"
     return f"It’s {fact['local_time']} in {fact['city']} right now"
+
+
+def resolve_current_times(
+    requests: Sequence[CurrentTimeRequest],
+    messages: Sequence[Message],
+    timestamp: float,
+) -> tuple[list[dict[str, str]], list[dict[str, str]]]:
+    originals = {
+        message.id: unicodedata.normalize("NFKC", message.text).casefold()
+        for message in messages
+        if message.role == "user" and not message.metadata.get("forwarded")
+    }
+    facts: list[dict[str, str]] = []
+    unresolved: list[dict[str, str]] = []
+    for request in requests:
+        source = originals.get(request.source_message_id)
+        location = unicodedata.normalize("NFKC", request.location).casefold()
+        if source is None or location not in source:
+            unresolved.append(
+                {"location": request.location, "reason": "unverified_location"}
+            )
+            continue
+        if request.timezone is None:
+            unresolved.append(
+                {"location": request.location, "reason": "ambiguous_timezone"}
+            )
+            continue
+        try:
+            zone = ZoneInfo(request.timezone)
+        except (ZoneInfoNotFoundError, ValueError):
+            unresolved.append(
+                {"location": request.location, "reason": "unknown_timezone"}
+            )
+            continue
+        local = datetime.fromtimestamp(timestamp, UTC).astimezone(zone)
+        fact = {
+            "city": request.location,
+            "timezone": request.timezone,
+            "local_time": local.strftime("%H:%M"),
+            "local_date": local.date().isoformat(),
+            "utc_offset": local.strftime("%z"),
+        }
+        if fact not in facts:
+            facts.append(fact)
+    return facts, unresolved

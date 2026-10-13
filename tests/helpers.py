@@ -12,6 +12,11 @@ from app.modules.memory.schemas import EpisodeSummary, SummaryClaim
 from app.modules.telegram.service import service_text
 from app.shared.storage import Transaction, fetchone
 
+PLATFORM_INVITATION_EN = (
+    "If you’d like to keep chatting, you can buy chat time on BeHappy2Day"
+)
+PLATFORM_CLOSING_EN = "Understood, let’s leave it here"
+
 
 class ScriptedModel:
     def __init__(self) -> None:
@@ -68,6 +73,11 @@ class ScriptedModel:
                 "pt": f"Obrigado por compartilhar isso comigo. Turno {number}.",
             }
             result = {"reply": texts[language], "dialogue_act": "acknowledge"}
+            transition = data.get("PLATFORM_TRANSITION", {})
+            if transition.get("eligible"):
+                result["platform_notice"] = PLATFORM_INVITATION_EN
+            elif transition.get("required"):
+                result["platform_notice"] = PLATFORM_CLOSING_EN
         return schema.model_validate(result)
 
     async def summarize(

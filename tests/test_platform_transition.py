@@ -5,7 +5,13 @@ import pytest
 from app.application import Application
 from app.modules.delivery.entities import SendResult
 from app.shared.storage import Transaction
-from tests.helpers import conversation, scalar, update
+from tests.helpers import (
+    PLATFORM_CLOSING_EN,
+    PLATFORM_INVITATION_EN,
+    conversation,
+    scalar,
+    update,
+)
 
 
 def enable_preview(app: Application) -> None:
@@ -87,6 +93,7 @@ async def test_agent_selects_moment_and_server_owns_copy_and_stops_next_generati
             "reply": "I’m enjoying our conversation",
             "dialogue_act": "reaction",
             "platform_transition": True,
+            "platform_notice": PLATFORM_INVITATION_EN,
         }
     )
     await send_turn(app, 2)
@@ -132,6 +139,7 @@ async def test_premature_model_decision_is_repaired_without_closing(
             "reply": "Go to the platform",
             "dialogue_act": "reaction",
             "platform_transition": True,
+            "platform_notice": PLATFORM_INVITATION_EN,
         }
     )
     await send_turn(app, 1)
@@ -146,7 +154,12 @@ async def test_stop_during_transition_generation_prevents_invitation(
     await seed_count(app)
     app.model.release = asyncio.Event()
     app.model.responses["generate"].append(
-        {"reply": "bye", "dialogue_act": "reaction", "platform_transition": True}
+        {
+            "reply": "bye",
+            "dialogue_act": "reaction",
+            "platform_transition": True,
+            "platform_notice": PLATFORM_INVITATION_EN,
+        }
     )
     await app.telegram.ingest([update(2, "one more topic")])
     task = asyncio.create_task(app.turn_worker.run_once())
@@ -246,7 +259,11 @@ async def test_current_refusal_is_applied_before_transition_decision(
         interpretation_operation(message, "offer_refusal", True, "boundary")
     )
     app.model.responses["generate"].append(
-        {"reply": "Understood. Take care.", "dialogue_act": "closing"}
+        {
+            "reply": "Understood. Take care.",
+            "dialogue_act": "closing",
+            "platform_notice": PLATFORM_CLOSING_EN,
+        }
     )
     await app.turn_worker.run_once()
     await app.delivery.run_once()
@@ -346,7 +363,12 @@ async def test_transition_answer_is_checked_by_semantic_critic(
 ) -> None:
     await seed_count(app)
     app.model.responses["generate"].append(
-        {"reply": "done", "dialogue_act": "closing", "platform_transition": True}
+        {
+            "reply": "done",
+            "dialogue_act": "closing",
+            "platform_transition": True,
+            "platform_notice": PLATFORM_INVITATION_EN,
+        }
     )
     await send_turn(app, 2)
     assert [task for task, _ in app.model.calls] == [

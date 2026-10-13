@@ -56,7 +56,9 @@ class CommerceService:
             >= self.settings.preview_max_replies - 1,
         }
 
-    def transition_text(self, language: str, answer: str | None = None) -> str:
+    def transition_text(
+        self, language: str, answer: str | None = None, notice: str | None = None
+    ) -> str:
         texts = {
             "ru": "Если захочешь продолжить общение, на BeHappy2Day можно купить время для переписки",
             "en": "If you’d like to keep chatting, you can buy chat time on BeHappy2Day",
@@ -64,7 +66,9 @@ class CommerceService:
             "pt": "Se quiser continuar conversando, pode comprar tempo de conversa no BeHappy2Day",
         }
         invitation = (
-            texts.get(language.split("-")[0], texts["en"]) + "\n" + PLATFORM_URL
+            (notice or texts.get(language.split("-")[0], texts["en"]))
+            + "\n"
+            + PLATFORM_URL
         )
         return f"{answer.strip()}\n\n{invitation}" if answer else invitation
 
@@ -77,14 +81,16 @@ class CommerceService:
         }
         return texts.get(language.split("-")[0], texts["en"]) + "\n" + PLATFORM_URL
 
-    def farewell_text(self, language: str, answer: str | None = None) -> str:
+    def farewell_text(
+        self, language: str, answer: str | None = None, notice: str | None = None
+    ) -> str:
         texts = {
             "ru": "Понял, тогда закончим здесь",
             "en": "Understood, let’s leave it here",
             "es": "Entendido, lo dejamos aquí",
             "pt": "Entendido, vamos encerrar por aqui",
         }
-        closing = texts.get(language.split("-")[0], texts["en"])
+        closing = notice or texts.get(language.split("-")[0], texts["en"])
         return f"{answer.strip()}\n\n{closing}" if answer else closing
 
     def closed_text(self, language: str) -> str:

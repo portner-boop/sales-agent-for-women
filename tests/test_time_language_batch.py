@@ -41,12 +41,15 @@ def test_split_time_uses_iana_daylight_saving(
         "Время в Сплите?",
     ],
 )
-async def test_seven_repeated_time_requests_never_need_model(
+async def test_seven_repeated_time_requests_survive_model_failure(
     app: Application, text: str
 ) -> None:
     language = "ru" if "Сплите" in text else "en"
-    app.model.responses["interpret"].append(RuntimeError("gateway unavailable"))
     for number in range(1, 8):
+        app.model.responses["interpret"].extend(
+            [RuntimeError("gateway unavailable")] * 2
+        )
+        app.model.responses["recover"].extend([RuntimeError("gateway unavailable")] * 2)
         await app.telegram.ingest([update(number, text)])
         await app.drain()
         assert app.sender.sent[-1] == (
@@ -55,16 +58,16 @@ async def test_seven_repeated_time_requests_never_need_model(
         )
         app.clock.advance(60)
     assert len(app.sender.sent) == 7
-    assert all(task == "validate_summary" for task, _ in app.model.calls)
+    assert any(task == "interpret" for task, _ in app.model.calls)
     assert (
         await scalar(
             app, "SELECT sum(json_extract(metrics_json, '$.llm_calls')) FROM agent_runs"
         )
-        == 0
+        > 0
     )
     assert (
         await scalar(app, "SELECT count(*) FROM agent_runs WHERE status='fallback'")
-        == 0
+        == 7
     )
 
 
@@ -116,19 +119,19 @@ def test_clock_shortcut_does_not_swallow_other_questions(text: str) -> None:
 @pytest.mark.parametrize(
     "text,prior,interpretation,expected",
     [
-        ("im back. today was a hard shift at the hospital", "ru", "ru", "en"),
-        ("Why did you reply in Russian?", "en", "ru", "en"),
-        ("English is fine", "ru", "ru", "en"),
-        ("no, english is ok. random question, why is the sky blue?", "ru", "ru", "en"),
-        ("Please reply in Russian", "en", "en", "ru"),
-        ("ok", "ru", "en", "ru"),
-        ("🙂", "en", "ru", "en"),
-        ("Привет, мне так легче", "en", "en", "ru"),
+        ("im back. today was a hard shift at the hospital", "ru", None, "en"),
+        ("Why did you reply in Russian?", "en", None, "en"),
+        ("English is fine", "ru", None, "en"),
+        ("no, english is ok. random question, why is the sky blue?", "ru", None, "en"),
+        ("Please reply in Russian", "en", None, "ru"),
+        ("ok", "ru", None, "ru"),
+        ("🙂", "en", None, "en"),
+        ("Привет, мне так легче", "en", None, "ru"),
         ("Hola, ¿cómo estás?", "en", "es", "es"),
     ],
 )
-def test_language_follows_current_user_not_old_service_messages(
-    text: str, prior: str, interpretation: str, expected: str
+def test_language_fallback_uses_current_user_without_interpreter(
+    text: str, prior: str, interpretation: str | None, expected: str
 ) -> None:
     assert reply_language(text, prior, interpretation) == expected
 
@@ -189,11 +192,11 @@ async def test_english_followup_is_repaired_or_silently_skipped(
     assert (await conversation(app)).language == "en"
 
 
-async def test_wrong_interpretation_and_repair_cannot_change_english(
+async def test_wrong_generation_and_repair_cannot_change_interpreted_language(
     app: Application,
 ) -> None:
     app.model.responses["interpret"].append(
-        {"intent": "chat", "dialogue_mode": "continuation", "language": "ru"}
+        {"intent": "chat", "dialogue_mode": "continuation", "language": "en"}
     )
     app.model.responses["generate"].append(
         {"reply": "Теперь буду отвечать на русском", "dialogue_act": "answer"}
