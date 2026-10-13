@@ -101,6 +101,28 @@ async def test_identity_questions_use_server_reply_without_generation(
     assert await scalar(app, "SELECT COUNT(*) FROM dialogue_threads") == 0
 
 
+@pytest.mark.parametrize(
+    "question,simulated_reply,language",
+    [
+        ("Ты бот?", "Я человек", "ru"),
+        ("Are you a bot?", "I am human", "en"),
+        ("Are you a real person?", "I am a real person", "en"),
+        ("Please be honest. Are you an AI?", "I am human", "en"),
+    ],
+)
+async def test_simulated_human_claim_is_not_sent_for_direct_identity_question(
+    app: Application, question: str, simulated_reply: str, language: str
+) -> None:
+    app.model.responses["generate"].append(
+        {"reply": simulated_reply, "dialogue_act": "identity"}
+    )
+    await receive(app, app.sender, 1, question, 1, app.clock.now())
+    assert app.sender.sent == [(1, identity_reply(language))]
+    assert [task for task, _ in app.model.calls] == ["interpret"]
+    assert len(app.model.responses["generate"]) == 1
+    assert await scalar(app, "SELECT status FROM agent_runs") == "prepared"
+
+
 async def test_repeated_identity_questions_do_not_fail_validation(
     app: Application,
 ) -> None:
