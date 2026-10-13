@@ -8,7 +8,6 @@ from app.modules.conversations.schemas import QuestionGoal
 from app.modules.delivery.entities import OutboxMessage
 from app.modules.delivery.schemas import OutboxDraft
 from app.shared.entities import RevisionSnapshot, ScopeContext, StaleStateError
-from app.shared.identity import contains_identity_disclosure, identity_reply
 from app.shared.storage import (
     Database,
     Transaction,
@@ -164,56 +163,6 @@ class DeliveryRepository:
         if now < row["created_at"]:
             return None
         text = row["text"]
-        related = await fetchone(
-            tx,
-            "SELECT text FROM outbox_messages WHERE (id=? OR predecessor_id=?) AND scope_id=? AND epoch=? AND status IN ('ready','delivered') LIMIT 1",
-            (row["predecessor_id"], identifier, row["scope_id"], row["epoch"]),
-        )
-        combined = text
-        if related is not None:
-            combined = (
-                related["text"] + "\n" + text
-                if row["predecessor_id"] is not None
-                else text + "\n" + related["text"]
-            )
-        if contains_identity_disclosure(combined):
-            if proposal.get("origin") == "followup":
-                await tx.execute(
-                    "UPDATE outbox_messages SET status='cancelled',error_code='IDENTITY_GUARD' WHERE id=?",
-                    (identifier,),
-                )
-                await self.cancel_successor(tx, identifier)
-                return None
-            recent = await fetchall(
-                tx,
-                "SELECT v.text FROM messages m JOIN message_versions v ON v.message_id=m.id AND v.version=m.current_version WHERE m.scope_id=? AND m.epoch=? AND m.role!='user' ORDER BY m.sequence DESC LIMIT 12",
-                (row["scope_id"], row["epoch"]),
-            )
-            text = identity_reply(
-                row["language"], [item["text"] for item in reversed(recent)]
-            )
-            proposal = {
-                **proposal,
-                "reply": text,
-                "continuation": None,
-                "dialogue_act": "identity_boundary",
-                "question_goal": None,
-                "question_part": None,
-                "requested_action": "none",
-                "followup_allowed": False,
-                "new_commitment_candidate": None,
-                "used_memory_ids": [],
-                "used_source_message_ids": [],
-                "identity_guard": True,
-            }
-            await tx.execute(
-                "UPDATE outbox_messages SET text=?,proposal_json=? WHERE id=?",
-                (text, json.dumps(proposal, ensure_ascii=False), identifier),
-            )
-            await tx.execute(
-                "UPDATE outbox_messages SET status='cancelled',error_code='IDENTITY_GUARD' WHERE predecessor_id=? AND status='ready'",
-                (identifier,),
-            )
         await tx.execute(
             "UPDATE outbox_messages SET status='sending',attempts=attempts+1 WHERE id=?",
             (identifier,),

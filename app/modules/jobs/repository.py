@@ -78,12 +78,13 @@ class JobRepository:
         now: float,
         error_code: str | None = None,
         permanent: bool = False,
+        retry_after: float = 0,
     ) -> None:
         async def finish(tx: Transaction) -> None:
             status = (
                 "done"
                 if error_code is None
-                else "dead_letter" if permanent or job.attempts >= 3 else "pending"
+                else "dead_letter" if permanent or job.is_final_attempt else "pending"
             )
             await tx.execute(
                 "UPDATE scheduled_jobs SET status=CASE WHEN ?='done' AND rerun_requested=1 THEN 'pending' ELSE ? END,attempts=CASE WHEN ?='done' THEN 0 ELSE attempts END,run_at=?,rerun_requested=0,lease_until=NULL,lease_token=NULL,error_code=? WHERE id=? AND status='running' AND lease_token=?",
@@ -91,7 +92,11 @@ class JobRepository:
                     status,
                     status,
                     status,
-                    now if error_code is None else now + min(60, 2**job.attempts),
+                    (
+                        now
+                        if error_code is None
+                        else now + max(min(60, 2**job.attempts), retry_after)
+                    ),
                     error_code,
                     job.id,
                     job.lease_token,

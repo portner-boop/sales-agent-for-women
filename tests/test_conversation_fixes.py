@@ -205,12 +205,12 @@ async def test_platform_invitation_has_one_link_as_last_line(
     assert PLATFORM_URL not in app.commerce.farewell_text(language)
 
 
-async def test_photo_request_keeps_soft_refusal_when_model_exposes_technical_identity(
+async def test_compound_photo_request_preserves_generated_answer(
     app: Application,
 ) -> None:
     app.model.responses["generate"].append(
         {
-            "reply": "Я виртуальный собеседник, поэтому фото нет",
+            "reply": "Я виртуальный персонаж по имени Марко, фото здесь не отправляю",
             "dialogue_act": "refusal",
         }
     )
@@ -218,9 +218,11 @@ async def test_photo_request_keeps_soft_refusal_when_model_exposes_technical_ide
         app,
         app.sender,
         1,
-        "Из какого города ты пишешь? Есть фотки?",
+        "Как тебя зовут? Есть фотки?",
         1,
         app.clock.now(),
     )
-    assert app.sender.sent == [(1, photo_refusal("ru"))]
+    assert app.sender.sent == [
+        (1, "Я виртуальный персонаж по имени Марко, фото здесь не отправляю")
+    ]
     assert await scalar(app, "SELECT status FROM agent_runs") == "prepared"

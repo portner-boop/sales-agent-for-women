@@ -2,7 +2,7 @@ import asyncio
 import logging
 from collections.abc import Awaitable, Callable
 
-from app.modules.jobs.entities import Job
+from app.modules.jobs.entities import Job, JobRetryError
 from app.modules.jobs.repository import JobRepository
 from app.shared.entities import Clock, EvidenceError, StaleStateError
 
@@ -32,6 +32,14 @@ class JobService:
                 raise
             await self.repository.finish(
                 job, self.clock.now(), "LEASE_LOST", permanent=True
+            )
+        except JobRetryError as error:
+            await self.repository.finish(
+                job,
+                self.clock.now(),
+                error.code,
+                permanent=error.permanent,
+                retry_after=error.retry_after,
             )
         except (StaleStateError, EvidenceError) as error:
             await self.repository.finish(

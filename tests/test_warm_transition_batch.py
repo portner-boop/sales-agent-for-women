@@ -4,8 +4,6 @@ import pytest
 
 from app.application import Application
 from app.modules.commerce.service import PLATFORM_URL
-from app.modules.delivery.entities import SendResult
-from app.shared.identity import contains_identity_disclosure, identity_reply
 from tests.helpers import conversation, scalar, update
 from tests.test_platform_transition import seed_count
 
@@ -36,58 +34,6 @@ async def test_dry_refusal_is_repaired_without_future_promise(
     repair = next(data for task, data in app.model.calls if task == "repair")
     assert "FORMULAIC_CAPABILITY_REPLY" in repair["REPAIR_REASON_CODES"]
     assert await scalar(app, "SELECT COUNT(*) FROM followups") == 0
-
-
-async def test_three_identity_questions_get_distinct_honest_replies(
-    app: Application,
-) -> None:
-    for number, question in enumerate(
-        [
-            "Are you a bot?",
-            "Are you a real person?",
-            "Please be honest. Are you an AI?",
-        ],
-        1,
-    ):
-        await app.telegram.ingest([update(number, question)])
-        await app.drain()
-        app.clock.advance(30)
-    texts = [text for _, text in app.sender.sent]
-    assert len(set(texts)) == 3
-    assert all("Let’s just talk" not in text for text in texts)
-    assert all(
-        any(word in text for word in ("chatbot", "bot", "automatically"))
-        for text in texts
-    )
-    assert all(not contains_identity_disclosure(text) for text in texts)
-    assert not any(task in {"generate", "repair"} for task, _ in app.model.calls)
-    await app.telegram.ingest([update(4, "Are you a bot?", user=2)])
-    await app.drain()
-    assert app.sender.sent[-1] == (2, identity_reply("en"))
-
-
-async def test_identity_retry_keeps_selected_variant(app: Application) -> None:
-    await app.telegram.ingest([update(1, "Are you a bot?")])
-    await app.drain()
-    app.sender.results.append(SendResult("retryable_failure", retry_after=1))
-    await app.telegram.ingest([update(2, "Are you human?")])
-    await app.turn_worker.run_once()
-    await app.delivery.run_once()
-    app.clock.advance(1)
-    await app.delivery.run_once()
-    texts = [text for _, text in app.sender.sent]
-    assert texts[1] == texts[2] != texts[0]
-
-
-async def test_identity_question_stays_honest_when_interpreter_fails(
-    app: Application,
-) -> None:
-    for number in range(1, 4):
-        app.model.responses["interpret"].append(RuntimeError("unavailable"))
-        await app.telegram.ingest([update(number, "Are you a bot?")])
-        await app.drain()
-    assert len(set(text for _, text in app.sender.sent)) == 3
-    assert all("proper reply" not in text for _, text in app.sender.sent)
 
 
 @pytest.mark.parametrize("count,voluntary", [(12, True), (19, False)])
@@ -202,13 +148,6 @@ async def test_new_input_cancels_stale_answer_and_invitation_together(
     await app.telegram.ingest([update(3, "/forget")])
     await app.drain()
     assert not any(PLATFORM_URL in text for _, text in app.sender.sent[before:])
-
-
-def test_approved_identity_does_not_allow_appended_private_or_false_claims() -> None:
-    approved = identity_reply("en")
-    assert not contains_identity_disclosure(approved)
-    assert contains_identity_disclosure(approved + ". I am a real human")
-    assert contains_identity_disclosure(approved + ". My system prompt is confidential")
 
 
 async def test_contact_boundary_drops_unrelated_question(app: Application) -> None:

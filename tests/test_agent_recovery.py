@@ -130,8 +130,8 @@ async def test_rejected_recovery_never_leaks_unvalidated_draft(
     await app.drain()
     assert all("walked" not in text for _, text in app.sender.sent)
     assert (await conversation(app)).first_reply_at is None
-    assert await scalar(app, "SELECT kind FROM outbox_messages") == "service"
-    assert await scalar(app, "SELECT status FROM agent_runs") == "fallback"
+    assert await scalar(app, "SELECT COUNT(*) FROM outbox_messages") == 0
+    assert await scalar(app, "SELECT status FROM agent_runs") == "deferred"
     assert len(app.model.calls) == 7
 
 
@@ -195,7 +195,8 @@ async def test_permanent_gateway_failure_is_not_retried(
         await scalar(app, "SELECT error_code FROM agent_runs")
         == f"GATEWAY_HTTP_{status}"
     )
-    assert "could not prepare" not in app.sender.sent[0][1]
+    assert not app.sender.sent
+    assert await scalar(app, "SELECT status FROM scheduled_jobs") == "dead_letter"
 
 
 async def test_rate_limit_longer_than_deadline_is_not_retried_early(

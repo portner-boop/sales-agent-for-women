@@ -336,13 +336,16 @@ class ContextBuilder:
         )
         commitments = await self.conversations.commitments(turn.scope)
         fact_budget = 800
-        facts: list[dict[str, Any]] = []
+        facts = [
+            item
+            for item in view.facts
+            if item["predicate"] in interpretation.retrieval_predicates
+        ]
+        required_fact_ids = {item["id"] for item in facts}
         for item in view.facts:
+            if item["id"] in required_fact_ids:
+                continue
             if self.counter.count(facts + [item]) > fact_budget:
-                if item["predicate"] in interpretation.retrieval_predicates:
-                    raise ContextOverflowError(
-                        "Requested facts exceed the memory budget"
-                    )
                 continue
             facts.append(item)
         summaries: list[dict[str, Any]] = []
@@ -424,6 +427,11 @@ class ContextBuilder:
 
         while total() > self.settings.context_tokens and summaries:
             summaries.pop()
+        for item in list(reversed(facts)):
+            if total() <= self.settings.context_tokens:
+                break
+            if item["id"] not in required_fact_ids:
+                facts.remove(item)
         for source in list(reversed(sources)):
             if total() <= self.settings.context_tokens:
                 break

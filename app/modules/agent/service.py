@@ -27,7 +27,11 @@ from app.modules.agent.errors import (
     ModelOutputError,
     ReplyRejectedError,
 )
-from app.modules.agent.language import language_instruction, reply_language
+from app.modules.agent.language import (
+    language_instruction,
+    reply_language,
+    reply_validation_instruction,
+)
 from app.modules.agent.prompts import (
     FOLLOWUP_RULES,
     FOLLOWUP_VALIDATOR_RULES,
@@ -39,10 +43,10 @@ from app.modules.agent.prompts import (
 )
 from app.modules.agent.recovery import (
     activity_reply,
+    can_retry_response,
     failure_code,
     retry_delay,
     structure_errors,
-    unavailable_reply,
 )
 from app.modules.agent.repository import AgentRepository
 from app.modules.agent.schemas import (
@@ -70,7 +74,7 @@ from app.modules.delivery.repository import DeliveryRepository
 from app.modules.delivery.schemas import OutboxDraft
 from app.modules.delivery.timing import response_delays
 from app.modules.followups.entities import FollowupTicket
-from app.modules.jobs.entities import Job
+from app.modules.jobs.entities import Job, JobRetryError
 from app.modules.memory.service import MemoryService
 from app.shared.config import RuntimeSettings
 from app.shared.entities import (
@@ -79,11 +83,6 @@ from app.shared.entities import (
     EvidenceError,
     ScopeContext,
     StaleStateError,
-)
-from app.shared.identity import (
-    asks_technical_identity,
-    contains_identity_disclosure,
-    identity_reply,
 )
 from app.shared.storage import Transaction, fetchone
 
@@ -184,6 +183,14 @@ class AgentService:
     ) -> SchemaT:
         if task in {"generate", "repair", "recover", "followup"}:
             rules += language_instruction(data["APPLICATION_STATE"]["language"])
+        elif task in {"validate", "validate_repair", "validate_recovery"}:
+            rules = (
+                reply_validation_instruction(
+                    data["context"]["APPLICATION_STATE"]["language"]
+                )
+                + "\n"
+                + rules
+            )
         for attempt in range(2):
             current = await self.conversation_service.current(run.turn)
             async with self.repository.database.read() as tx:
@@ -470,6 +477,11 @@ class AgentService:
             )
             received_at = min(message.received_at for message in turn.messages)
             retry_requested_at = job.payload.get("retry_requested_at")
+            if retry_requested_at is None and (
+                job.attempts > 1
+                or any(message.turn_id is not None for message in turn.messages)
+            ):
+                retry_requested_at = self.clock.now()
             if retry_requested_at is not None:
                 if (
                     not isinstance(retry_requested_at, (int, float))
@@ -495,6 +507,9 @@ class AgentService:
             identifier = await self.repository.start(turn, self.clock.now())
             self.active[identifier] = run
             status, code = "prepared", None
+            retry_required = False
+            retry_allowed = True
+            retry_after = 0.0
             try:
                 async with asyncio.timeout(limit):
                     if platform_info_requested:
@@ -521,6 +536,8 @@ class AgentService:
                 raise
             except Exception as error:
                 status, code = "fallback", failure_code(error)
+                retry_allowed = can_retry_response(error)
+                retry_after = retry_delay(error) or 0.0
                 run.validation_events.append(
                     {
                         "stage": "failure",
@@ -540,14 +557,18 @@ class AgentService:
                 )
                 try:
                     if self._has_photo_request(run):
-                        await self._fallback(run, code)
+                        await self._fallback(
+                            run, code, job.is_final_attempt or not retry_allowed
+                        )
                         run.validation_events.append({"stage": "photo_failure_refusal"})
                         status, code = "prepared", None
                     elif isinstance(error, (ValueError, EvidenceError)):
                         await self._recover(identifier, error)
                         status, code = "prepared", None
                     else:
-                        await self._fallback(run, code)
+                        retry_required = not await self._fallback(
+                            run, code, job.is_final_attempt or not retry_allowed
+                        )
                 except asyncio.CancelledError:
                     status, code = "cancelled", "INTERRUPTED"
                     raise
@@ -555,11 +576,21 @@ class AgentService:
                     status, code = "cancelled", "STALE_STATE"
                 except Exception as recovery_error:
                     code = failure_code(recovery_error)
+                    retry_allowed = can_retry_response(recovery_error)
+                    retry_after = retry_delay(recovery_error) or 0.0
                     run.validation_events.append(
                         {"stage": "recovery_failure", "error_code": code}
                     )
-                    await self._fallback(run, code)
-                if status == "fallback":
+                    retry_required = not await self._fallback(
+                        run, code, job.is_final_attempt or not retry_allowed
+                    )
+                if retry_required:
+                    status = (
+                        "unanswered"
+                        if job.is_final_attempt or not retry_allowed
+                        else "deferred"
+                    )
+                if status in {"fallback", "deferred", "unanswered"}:
                     logger.warning("agent_failed run=%s code=%s", identifier, code)
             finally:
                 self.active.pop(identifier, None)
@@ -577,6 +608,10 @@ class AgentService:
                         "queued_seconds": queued,
                     },
                     code,
+                )
+            if retry_required:
+                raise JobRetryError(
+                    code or "RESPONSE_UNAVAILABLE", retry_after, not retry_allowed
                 )
 
     async def _platform_info_requested(self, turn: Turn) -> bool:
@@ -835,12 +870,6 @@ class AgentService:
         if time_reply is not None:
             run.proposal = ReplyProposal(reply=time_reply, dialogue_act="current_time")
             return {"phase": "generated"}
-        if any(asks_technical_identity(message.text) for message in run.turn.messages):
-            run.proposal = ReplyProposal(
-                reply=self._identity_reply(run),
-                dialogue_act="identity_boundary",
-            )
-            return {"phase": "generated"}
         if self._standalone_photo_request(run):
             run.proposal = ReplyProposal(
                 reply=photo_refusal(run.conversation.language),
@@ -872,29 +901,6 @@ class AgentService:
             return []
         if run.recovering:
             run.context.data["DIALOGUE_PLAN"]["requires_continuation"] = False
-        if any(
-            asks_technical_identity(message.text) for message in run.turn.messages
-        ) or contains_identity_disclosure(run.proposal.full_reply):
-            photo_boundary = self._has_photo_request(run) and not any(
-                asks_technical_identity(message.text) for message in run.turn.messages
-            )
-            run.proposal = (
-                FollowupProposal(should_send=False, dialogue_act="identity_boundary")
-                if run.followup is not None
-                else ReplyProposal(
-                    reply=(
-                        photo_refusal(run.conversation.language)
-                        if photo_boundary
-                        else self._identity_reply(run)
-                    ),
-                    dialogue_act=(
-                        "photo_refusal" if photo_boundary else "identity_boundary"
-                    ),
-                )
-            )
-            run.context.data["DIALOGUE_PLAN"]["requires_continuation"] = False
-            run.validation_events.append({"stage": stage + "_identity_guard"})
-            return []
         if self._standalone_photo_request(run):
             run.proposal = ReplyProposal(
                 reply=photo_refusal(run.conversation.language),
@@ -1262,18 +1268,6 @@ class AgentService:
         await self.repository.database.write(prepare)
         return {"phase": "prepared"}
 
-    def _identity_reply(self, run: ActiveRun) -> str:
-        recent = (
-            [
-                item["text"]
-                for item in run.context.data["RECENT_MESSAGES"]
-                if item["role"] != "user"
-            ]
-            if run.context is not None
-            else []
-        )
-        return identity_reply(self._input_language(run), recent)
-
     def _input_language(self, run: ActiveRun) -> str:
         if not run.turn.messages:
             return run.conversation.language
@@ -1310,24 +1304,18 @@ class AgentService:
             for message in run.turn.messages
         )
 
-    async def _fallback(self, run: ActiveRun, code: str) -> None:
+    async def _fallback(self, run: ActiveRun, code: str, final_attempt: bool) -> bool:
         photo_requested = self._has_photo_request(run)
         language = self._input_language(run)
-        identity_text = None
-        if any(asks_technical_identity(message.text) for message in run.turn.messages):
-            history = await self.conversations.messages(run.turn.scope)
-            identity_text = identity_reply(
-                language,
-                [message.text for message in history if message.role != "user"],
-            )
-        activity_text = (
-            activity_reply(run.turn.messages[0].text, language)
+        direct_text = (
+            run.turn.messages[0].text
             if len(run.turn.messages) == 1
             and not run.turn.messages[0].metadata.get("forwarded")
             else None
         )
+        activity_text = activity_reply(direct_text, language) if direct_text else None
 
-        async def prepare(tx: Transaction) -> None:
+        async def prepare(tx: Transaction) -> bool:
             current = await self.conversations.get(run.turn.scope.scope_id, tx)
             if (
                 current.scope != run.turn.scope
@@ -1336,7 +1324,7 @@ class AgentService:
                 != run.conversation.snapshot.control_revision
                 or await self.delivery.is_killed(tx)
             ):
-                return
+                return True
             if self.commerce.can_reply(current):
                 text = (
                     photo_refusal(
@@ -1346,11 +1334,14 @@ class AgentService:
                         )
                     )
                     if photo_requested
-                    else identity_text
-                    or self._time_reply(run)
-                    or activity_text
-                    or unavailable_reply(language)
+                    else self._time_reply(run) or activity_text
                 )
+                if text is None:
+                    await self.conversations.finish_turn(
+                        tx, run.turn, "skipped" if final_attempt else "deferred"
+                    )
+                    return False
+                now = self.clock.now()
                 await self.delivery.prepare(
                     tx,
                     current.snapshot,
@@ -1358,7 +1349,7 @@ class AgentService:
                         action_key=f"fallback:{run.turn.id}",
                         kind="reply" if photo_requested else "service",
                         text=text,
-                        deadline=self.clock.now() + 30,
+                        deadline=now + 30,
                     ),
                     self.clock.now(),
                     (
@@ -1383,5 +1374,6 @@ class AgentService:
                     turn_id=run.turn.id,
                 )
             await self.conversations.finish_turn(tx, run.turn, "prepared")
+            return True
 
-        await self.repository.database.write(prepare)
+        return await self.repository.database.write(prepare)

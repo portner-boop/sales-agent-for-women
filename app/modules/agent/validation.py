@@ -3,6 +3,7 @@ import unicodedata
 
 from app.modules.agent.entities import BuiltContext
 from app.modules.agent.language import wrong_reply_language
+from app.modules.agent.recovery import service_failure_reply
 from app.modules.agent.schemas import (
     FollowupProposal,
     ReplyProposal,
@@ -13,7 +14,6 @@ from app.modules.agent.style import (
     memory_profile_readout,
     unsolicited_day_part,
 )
-from app.shared.identity import contains_identity_disclosure
 
 
 def validate_reply(proposal: ReplyProposal, context: BuiltContext) -> list[str]:
@@ -23,6 +23,8 @@ def validate_reply(proposal: ReplyProposal, context: BuiltContext) -> list[str]:
     ).get("eligible"):
         errors.append("PLATFORM_TRANSITION_NOT_ALLOWED")
     text = proposal.full_reply.strip()
+    if service_failure_reply(text):
+        errors.append("SERVICE_FAILURE_REPLY")
     if wrong_reply_language(text, context.data["APPLICATION_STATE"]["language"]):
         errors.append("WRONG_LANGUAGE")
     user_text = " ".join(item["text"] for item in context.data["CURRENT_INPUT"])
@@ -35,8 +37,6 @@ def validate_reply(proposal: ReplyProposal, context: BuiltContext) -> list[str]:
         errors.append("UNSOLICITED_TIME_OF_DAY")
     if formulaic_capability_reply(text):
         errors.append("FORMULAIC_CAPABILITY_REPLY")
-    if contains_identity_disclosure(text):
-        errors.append("IDENTITY_DISCLOSURE")
     if memory_profile_readout(text, user_text):
         errors.append("MEMORY_PROFILE_READOUT")
     if re.search(

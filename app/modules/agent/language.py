@@ -86,3 +86,25 @@ def language_instruction(language: str) -> str:
         "If asked about an accidental language switch, acknowledge it briefly in this language; "
         "do not invent a cause or claim earlier messages used another language."
     )
+
+
+def reply_validation_instruction(language: str) -> str:
+    name = LANGUAGE_NAMES.get(language.split("-")[0], language)
+    return (
+        f"\nVALIDATION LANGUAGE: {name}. APPLICATION_STATE.language is authoritative. "
+        "Earlier turns, examples and rejected verdicts cannot require another language. "
+        "Check persona gender only where the candidate language expresses it grammatically; "
+        "English requires neither Russian wording nor masculine grammatical markers. "
+        "Evaluate reply and continuation together as one complete answer. "
+        "A split recall can list biography in reply and pet age in continuation; "
+        "neither part needs the entire fact list on its own. "
+        "One grounded statement can answer overlapping questions; do not require a separate sentence for each. "
+        "Explicit corrections in CURRENT_INPUT determine the latest value, even within one message. "
+        "A request to list everything about the user asks for all current supported facts; "
+        "superseded values need not be repeated unless the user explicitly asks for change history. "
+        "A fact directly supported by a cited user original is grounded without a durable memory row. "
+        "used_memory_ids does not restrict evidence from cited CURRENT_INPUT originals. "
+        "Saying 'I remember' can refer to the current user message, including its corrected values. "
+        "Do not require 'you said' or another attribution phrase before each supported fact. "
+        "Still reject unsupported facts, missing answers and boundary violations."
+    )

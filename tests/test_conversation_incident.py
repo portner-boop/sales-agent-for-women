@@ -3,7 +3,7 @@ import json
 import pytest
 
 from app.application import Application
-from app.modules.agent.recovery import activity_reply, unavailable_reply
+from app.modules.agent.recovery import activity_reply
 from tests.helpers import conversation, scalar, update
 
 
@@ -141,7 +141,8 @@ async def test_forwarded_activity_does_not_get_persona_rescue(app: Application) 
     app.model.responses["interpret"].append(RuntimeError("unavailable"))
     await app.telegram.ingest([raw])
     await app.drain()
-    assert app.sender.sent == [(1, unavailable_reply("ru"))]
+    assert not app.sender.sent
+    assert await scalar(app, "SELECT status FROM agent_runs") == "deferred"
 
 
 @pytest.mark.parametrize(
@@ -154,6 +155,6 @@ async def test_exhausted_errors_keep_diagnostics_out_of_user_text(
     app.model.responses["recover"].append(RuntimeError("failed"))
     await app.telegram.ingest([update(1, "Расскажи про музыку")])
     await app.drain()
-    assert app.sender.sent == [(1, unavailable_reply("ru"))]
-    assert await scalar(app, "SELECT status FROM agent_runs") == "fallback"
+    assert not app.sender.sent
+    assert await scalar(app, "SELECT status FROM agent_runs") == "deferred"
     assert await scalar(app, "SELECT error_code FROM agent_runs")

@@ -2,6 +2,7 @@ import re
 import unicodedata
 from datetime import UTC, datetime
 from email.utils import parsedate_to_datetime
+from math import isfinite
 
 from openai import APIConnectionError, APIStatusError
 from pydantic import ValidationError
@@ -20,6 +21,15 @@ ACTIVITY_QUESTIONS = re.compile(
     r"qu[eé]\s+(?:hiciste|has hecho|haces)(?:\s+(?:hoy|ayer|ahora))?|"
     r"(?:o que|que)\s+(?:voc[eê]\s+)?(?:fez|faz|est[aá] fazendo)"
     r"(?:\s+(?:hoje|ontem|agora))?)",
+    re.I,
+)
+
+SERVICE_FAILURE_TEXT = re.compile(
+    r"(?:couldn['’]?t|could not)\s+give\s+you\s+(?:a\s+)?proper\s+reply|"
+    r"не смог\s+ответить\s+как следует|"
+    r"(?:сейчас\s+)?не удалось\s+подготовить\s+ответ|"
+    r"не получилось\s+над[её]жно\s+обработать\s+(?:это\s+)?сообщение|"
+    r"no he podido responderte bien|não consegui responder direito",
     re.I,
 )
 
@@ -45,14 +55,12 @@ def activity_reply(text: str, language: str) -> str | None:
     return values.get(language.split("-")[0], values["en"])
 
 
-def unavailable_reply(language: str) -> str:
-    values = {
-        "ru": "Не смог ответить как следует. Давай попробуем ещё раз",
-        "en": "I couldn’t give you a proper reply. Let’s try again",
-        "es": "No he podido responderte bien. Intentémoslo de nuevo",
-        "pt": "Não consegui responder direito. Vamos tentar de novo",
-    }
-    return values.get(language.split("-")[0], values["en"])
+def service_failure_reply(text: str) -> bool:
+    return bool(SERVICE_FAILURE_TEXT.search(unicodedata.normalize("NFKC", text)))
+
+
+def can_retry_response(error: Exception) -> bool:
+    return not isinstance(error, APIStatusError) or retry_delay(error) is not None
 
 
 def failure_code(error: Exception) -> str:
@@ -90,7 +98,8 @@ def retry_delay(error: Exception) -> float | None:
     if header is None:
         return 0.25
     try:
-        return max(0, float(header))
+        seconds = float(header)
+        return max(0, seconds) if isfinite(seconds) else None
     except ValueError:
         try:
             return max(
