@@ -81,6 +81,12 @@ class ContinuingReplyProposal(ReplyProposal):
     continuation: str = Field(min_length=1, max_length=4000)
 
 
+class RecoveryReplyProposal(ReplyProposal):
+    continuation: None = None
+    followup_allowed: Literal[False] = False
+    requested_action: Literal["none"] = "none"
+
+
 class FollowupProposal(ReplyProposal):
     platform_transition: Literal[False] = False
     should_send: bool = Field(
@@ -114,7 +120,7 @@ class ContextManifest(BaseModel):
     input_revision: int
     control_revision: int
     memory_revision: int
-    policy_version: str = "mvp-2026-10-09-dialogue-v13-phone-style"
+    policy_version: str = "mvp-2026-10-13-dialogue-v21-recall-trust"
     persona_version: str = "marko-v1"
     model_id: str
     messages: list[dict[str, Any]]

@@ -39,7 +39,7 @@ DISCLOSURES: dict[str, dict[str, Any]] = {
     "languages": {
         "native_language": "Bosnian",
         "other_language": "English",
-        "service_languages": "multilingual AI service",
+        "service_languages": "multilingual conversation",
     },
     "appearance": {
         "height_cm": 177,

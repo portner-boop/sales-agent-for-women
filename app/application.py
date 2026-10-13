@@ -290,24 +290,23 @@ class Application:
         await self.database.write(quarantine)
         await asyncio.to_thread(expire_backups, self.settings.storage.directory, cutoff)
 
+    async def schedule_maintenance(self) -> None:
+        now = self.clock.now()
+
+        async def schedule(tx: Transaction) -> None:
+            for kind, period in (
+                ("backup", self.settings.storage.backup_interval_seconds),
+                ("retention", 3600),
+            ):
+                await self.jobs.schedule(
+                    tx, kind, f"{kind}:{int(now // period)}", now, now
+                )
+
+        await self.database.write(schedule)
+
     async def maintenance(self) -> None:
         while True:
-            now = self.clock.now()
-
-            async def schedule(tx: Transaction, scheduled_at: float = now) -> None:
-                for kind, period in (
-                    ("backup", self.settings.storage.backup_interval_seconds),
-                    ("retention", 3600),
-                ):
-                    await self.jobs.schedule(
-                        tx,
-                        kind,
-                        f"{kind}:{int(scheduled_at // period)}",
-                        scheduled_at,
-                        scheduled_at,
-                    )
-
-            await self.database.write(schedule)
+            await self.schedule_maintenance()
             logger.info("health %s", await self.metrics())
             await asyncio.sleep(30)
 

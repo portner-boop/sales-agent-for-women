@@ -20,6 +20,10 @@ class JobRepository:
         scope: ScopeContext | None = None,
         payload: JobPayload | None = None,
     ) -> None:
+        if kind in {"backup", "retention"} and await fetchone(
+            tx, "SELECT 1 FROM scheduled_jobs WHERE dedup_key=? LIMIT 1", (dedup_key,)
+        ):
+            return
         await tx.execute(
             "INSERT OR IGNORE INTO scheduled_jobs(id,scope_id,epoch,kind,payload_json,dedup_key,run_at,created_at) VALUES(?,?,?,?,?,?,?,?)",
             (

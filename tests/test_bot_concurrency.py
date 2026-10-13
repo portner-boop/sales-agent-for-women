@@ -114,7 +114,7 @@ async def test_start_uses_server_identity_without_llm(app: Application) -> None:
     assert app.sender.sent == [
         (
             17,
-            "I'm Marko, a virtual companion. This is a test chat. /start starts or resumes a conversation, /stop stops messages, /privacy shows data terms, /forget deletes memory.",
+            "I'm Marko. This is a test chat. /start starts or resumes a conversation, /stop stops messages, /privacy shows data terms, /forget deletes memory.",
         )
     ]
     assert not app.model.calls

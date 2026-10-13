@@ -1,0 +1,9 @@
+#!/bin/sh
+exec systemd-run --quiet --wait --pipe --collect --service-type=exec \
+  --property=User=behappy \
+  --property=Group=behappy \
+  --property=WorkingDirectory=/opt/behappy-bot \
+  --property=EnvironmentFile=/etc/behappy-bot.env \
+  --property=JoinsNamespaceOf=behappy-bot.service \
+  --property=PrivateTmp=true \
+  /opt/behappy-bot/.venv/bin/python -m app.manage "$@"

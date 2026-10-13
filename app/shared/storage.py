@@ -79,10 +79,14 @@ class Database:
 
     async def _connect(self) -> Transaction:
         connection = await aiosqlite.connect(self.path)
-        connection.row_factory = aiosqlite.Row
-        await connection.execute("PRAGMA foreign_keys=ON")
-        await connection.execute("PRAGMA synchronous=FULL")
-        await connection.execute(f"PRAGMA busy_timeout={self.busy_timeout_ms}")
+        try:
+            connection.row_factory = aiosqlite.Row
+            await connection.execute("PRAGMA foreign_keys=ON")
+            await connection.execute("PRAGMA synchronous=FULL")
+            await connection.execute(f"PRAGMA busy_timeout={self.busy_timeout_ms}")
+        except BaseException:
+            await connection.close()
+            raise
         return connection
 
     @asynccontextmanager

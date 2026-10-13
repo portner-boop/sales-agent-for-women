@@ -178,6 +178,7 @@ async def test_migration_preserves_parent_child_delivery_and_extends_pause(
         )
     first, second = await prepare_pair(prior)
     await prior.delivery.send(first)
+    await prior.database.write(restore_legacy_delay_column)
     async with prior.database.read() as tx:
         before = [
             dict(row)
@@ -199,7 +200,15 @@ async def test_migration_preserves_parent_child_delivery_and_extends_pause(
                     tx, "SELECT * FROM outbox_messages ORDER BY rowid"
                 )
             ]
-            assert before == after
+            assert before == [
+                {
+                    key: value
+                    for key, value in row.items()
+                    if key != "message_delay_seconds"
+                }
+                for row in after
+            ]
+            assert all(row["message_delay_seconds"] is None for row in after)
             assert not await fetchall(tx, "PRAGMA foreign_key_check")
 
         async def extend(tx: Transaction) -> None:
@@ -306,6 +315,7 @@ async def test_pause_upgrade_preserves_followup_timer(
             settings, FakeSender(), ScriptedModel(), app.clock
         )
     await seed(prior)
+    await prior.database.write(restore_legacy_delay_column)
     async with prior.database.read() as tx:
         before = [dict(row) for row in await fetchall(tx, "SELECT * FROM followups")]
         anchors = [
@@ -324,12 +334,21 @@ async def test_pause_upgrade_preserves_followup_timer(
             assert before == [
                 dict(row) for row in await fetchall(tx, "SELECT * FROM followups")
             ]
-            assert anchors == [
+            upgraded_anchors = [
                 dict(row)
                 for row in await fetchall(
                     tx, "SELECT * FROM outbox_messages ORDER BY rowid"
                 )
             ]
+            assert anchors == [
+                {
+                    key: value
+                    for key, value in row.items()
+                    if key != "message_delay_seconds"
+                }
+                for row in upgraded_anchors
+            ]
+            assert all(row["message_delay_seconds"] is None for row in upgraded_anchors)
             assert not await fetchall(tx, "PRAGMA foreign_key_check")
 
         async def widen(tx: Transaction) -> None:
@@ -345,3 +364,11 @@ async def test_pause_upgrade_preserves_followup_timer(
         assert len(sender.sent) == 1
     finally:
         await upgraded.close()
+
+
+async def restore_legacy_delay_column(tx: Transaction) -> None:
+    await tx.execute(
+        "UPDATE outbox_messages SET delay_seconds=COALESCE(message_delay_seconds,delay_seconds)"
+    )
+    await tx.execute("ALTER TABLE outbox_messages DROP COLUMN message_delay_seconds")
+    await tx.execute("DELETE FROM schema_migrations WHERE name='010_message_delay.sql'")

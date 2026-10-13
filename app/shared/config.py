@@ -14,6 +14,7 @@ class ConfigModel(BaseModel):
 class TelegramSettings(ConfigModel):
     token: SecretStr = SecretStr("")
     poll_timeout: int = Field(default=20, ge=1, le=50)
+    proxy_url: str | None = None
 
 
 class LLMSettings(ConfigModel):
@@ -47,8 +48,14 @@ class RuntimeSettings(ConfigModel):
     activity_gap_seconds: int = Field(default=1800, ge=1)
     max_message_chars: int = Field(default=16000, ge=1)
     kill_switch: bool = False
-    reply_pause_min_seconds: float = Field(default=8, ge=0, le=16)
-    reply_pause_max_seconds: float = Field(default=16, ge=0, le=16)
+    reply_pacing_enabled: bool = True
+    reply_pause_min_seconds: float = Field(default=2, ge=0, le=16)
+    reply_pause_max_seconds: float = Field(default=4, ge=0, le=16)
+    reply_typing_chars_per_second: float = Field(default=3, gt=0, allow_inf_nan=False)
+    reply_delay_jitter_ratio: float = Field(default=0.2, ge=0, le=1)
+    reply_delay_min_seconds: float = Field(default=5, ge=0, allow_inf_nan=False)
+    reply_delay_max_seconds: float = Field(default=60, gt=0, allow_inf_nan=False)
+    first_reply_max_seconds: float = Field(default=10, gt=0, allow_inf_nan=False)
     followup_enabled: bool = False
     followup_min_seconds: float = Field(default=30, ge=1)
     followup_max_seconds: float = Field(default=60, ge=1)
@@ -58,6 +65,8 @@ class RuntimeSettings(ConfigModel):
     def validate_reply_pause(self) -> "RuntimeSettings":
         if self.reply_pause_min_seconds > self.reply_pause_max_seconds:
             raise ValueError("Minimum reply pause exceeds maximum")
+        if self.reply_delay_min_seconds > self.reply_delay_max_seconds:
+            raise ValueError("Minimum reply delay exceeds maximum")
         if self.followup_min_seconds > self.followup_max_seconds:
             raise ValueError("Minimum follow-up delay exceeds maximum")
         return self

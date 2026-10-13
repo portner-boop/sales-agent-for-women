@@ -2,11 +2,18 @@ import re
 import unicodedata
 
 from app.modules.agent.entities import BuiltContext
+from app.modules.agent.language import wrong_reply_language
 from app.modules.agent.schemas import (
     FollowupProposal,
     ReplyProposal,
     TurnInterpretation,
 )
+from app.modules.agent.style import (
+    formulaic_capability_reply,
+    memory_profile_readout,
+    unsolicited_day_part,
+)
+from app.shared.identity import contains_identity_disclosure
 
 
 def validate_reply(proposal: ReplyProposal, context: BuiltContext) -> list[str]:
@@ -16,9 +23,40 @@ def validate_reply(proposal: ReplyProposal, context: BuiltContext) -> list[str]:
     ).get("eligible"):
         errors.append("PLATFORM_TRANSITION_NOT_ALLOWED")
     text = proposal.full_reply.strip()
-    if "behappy2day" in text.casefold() and not proposal.platform_transition:
+    if wrong_reply_language(text, context.data["APPLICATION_STATE"]["language"]):
+        errors.append("WRONG_LANGUAGE")
+    user_text = " ".join(item["text"] for item in context.data["CURRENT_INPUT"])
+    if unsolicited_day_part(
+        text,
+        user_text,
+        context.data["APPLICATION_STATE"]["dialogue_mode"] == "closing"
+        or bool(proposal.used_memory_ids or proposal.used_source_message_ids),
+    ):
+        errors.append("UNSOLICITED_TIME_OF_DAY")
+    if formulaic_capability_reply(text):
+        errors.append("FORMULAIC_CAPABILITY_REPLY")
+    if contains_identity_disclosure(text):
+        errors.append("IDENTITY_DISCLOSURE")
+    if memory_profile_readout(text, user_text):
+        errors.append("MEMORY_PROFILE_READOUT")
+    if re.search(
+        r"\bi['’]m not (?:doing|playing) verification games\b|"
+        r"\bi (?:don['’]t|do not) (?:do|play) verification games\b|"
+        r"\bя не (?:играю|собираюсь играть) в (?:игры с проверк\w*|проверочн\w* игры)",
+        text,
+        re.I,
+    ):
+        errors.append("HOSTILE_VERIFICATION_BOUNDARY")
+    if "behappy2day" in text.casefold():
         errors.append("UNSTRUCTURED_PLATFORM_PROMOTION")
     transition = context.data.get("PLATFORM_TRANSITION", {})
+    if transition.get("eligible") or transition.get("required"):
+        if len(text) > 3400:
+            errors.append("TRANSITION_ANSWER_TOO_LONG")
+    if proposal.platform_transition and (
+        "?" in text or proposal.question_goal or proposal.followup_allowed
+    ):
+        errors.append("TRANSITION_ANSWER_ONLY")
     if (
         transition.get("required")
         and not transition.get("eligible")
@@ -101,8 +139,12 @@ def validate_reply(proposal: ReplyProposal, context: BuiltContext) -> list[str]:
     canonical = context.data["PERSONA_PROJECTION"]
     if re.search(r"juri[ćc]|юри[чć]", text, re.I):
         errors.append("SURNAME_DISCLOSURE")
-    if "residence" not in canonical and re.search(
-        r"\b(?:split|croatia|сплит|хорвати\w*)\b", text, re.I
+    location_pattern = r"\b(?:split|croatia|сплит\w*|хорвати\w*)\b"
+    mentioned_location = bool(re.search(location_pattern, user_text, re.I))
+    if (
+        "residence" not in canonical
+        and re.search(location_pattern, text, re.I)
+        and not mentioned_location
     ):
         errors.append("LOCATION_DISCLOSURE")
     if "sister" not in canonical and re.search(
@@ -152,6 +194,15 @@ def needs_semantic_validation(
         + proposal.full_reply,
         re.I,
     )
+    user_request = any(
+        re.search(
+            r"\?|^\s*(?:why|how|what|where|when|who|explain|почему|зачем|как|что|где|когда|кто|объясни)\b|"
+            r"\b(?:verify|verification|fake|провер\w*|фейк\w*)\b",
+            message["text"],
+            re.I,
+        )
+        for message in context.data["CURRENT_INPUT"]
+    )
     return bool(
         proposal.continuation is not None
         or "?" in proposal.full_reply
@@ -167,4 +218,5 @@ def needs_semantic_validation(
         or context.data["ACTIVE_BOUNDARIES"]
         or factual
         or medical
+        or user_request
     )

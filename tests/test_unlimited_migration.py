@@ -60,6 +60,10 @@ async def test_expired_database_migrates_without_losing_pending_message(
             == 0
         )
         await app.drain()
+        due = await app.delivery_repository.next_ready_at(current.scope)
+        assert due is not None
+        app.clock.advance(max(0, due - app.clock.now()))
+        await app.drain()
         original = next(
             item
             for item in await app.conversations.messages(current.scope)

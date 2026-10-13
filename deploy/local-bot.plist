@@ -1,0 +1,35 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+	<key>EnvironmentVariables</key>
+	<dict>
+		<key>PYTHONDONTWRITEBYTECODE</key>
+		<string>1</string>
+		<key>PYTHONUNBUFFERED</key>
+		<string>1</string>
+	</dict>
+	<key>ExitTimeOut</key>
+	<integer>60</integer>
+	<key>KeepAlive</key>
+	<true/>
+	<key>Label</key>
+	<string>team.behappy.local-bot</string>
+	<key>ProgramArguments</key>
+	<array>
+		<string>/Users/damirmagdeev/Developing/VisualStudioCode/Job/sales-agent-for-women/.venv/bin/python</string>
+		<string>-m</string>
+		<string>app.bot</string>
+	</array>
+	<key>RunAtLoad</key>
+	<true/>
+	<key>StandardErrorPath</key>
+	<string>/Users/damirmagdeev/Developing/VisualStudioCode/Job/sales-agent-for-women/data/bot-local-service.log</string>
+	<key>StandardOutPath</key>
+	<string>/Users/damirmagdeev/Developing/VisualStudioCode/Job/sales-agent-for-women/data/bot-local-service.log</string>
+	<key>ThrottleInterval</key>
+	<integer>10</integer>
+	<key>WorkingDirectory</key>
+	<string>/Users/damirmagdeev/Developing/VisualStudioCode/Job/sales-agent-for-women</string>
+</dict>
+</plist>

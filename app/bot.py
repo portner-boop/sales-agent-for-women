@@ -7,6 +7,7 @@ from contextlib import AsyncExitStack
 from pathlib import Path
 
 from aiogram import Bot
+from aiogram.client.session.aiohttp import AiohttpSession
 
 from app.application import Application
 from app.modules.telegram.adapter import (
@@ -19,7 +20,10 @@ from app.shared.config import Settings, load_settings
 
 async def run_bot(settings: Settings) -> None:
     settings.require_credentials()
-    bot = Bot(settings.telegram.token.get_secret_value())
+    bot = Bot(
+        settings.telegram.token.get_secret_value(),
+        session=AiohttpSession(proxy=settings.telegram.proxy_url or None),
+    )
     async with AsyncExitStack() as stack:
         stack.push_async_callback(bot.session.close)
         sender = TelegramSender(bot)

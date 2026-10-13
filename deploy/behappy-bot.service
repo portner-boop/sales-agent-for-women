@@ -1,0 +1,28 @@
+[Unit]
+Description=BeHappy Telegram bot
+Wants=network-online.target xray.service
+After=network-online.target xray.service
+StartLimitIntervalSec=0
+
+[Service]
+Type=exec
+User=behappy
+Group=behappy
+WorkingDirectory=/opt/behappy-bot
+EnvironmentFile=/etc/behappy-bot.env
+Environment=PYTHONUNBUFFERED=1
+Environment=PYTHONDONTWRITEBYTECODE=1
+ExecStart=/opt/behappy-bot/.venv/bin/python -m app.bot
+Restart=always
+RestartSec=10
+TimeoutStopSec=60
+UMask=0077
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=true
+ReadWritePaths=/var/lib/behappy-bot
+RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6
+
+[Install]
+WantedBy=multi-user.target

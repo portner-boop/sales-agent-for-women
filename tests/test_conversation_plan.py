@@ -13,21 +13,44 @@ from tests.helpers import conversation, interpretation_operation, scalar, update
 
 
 @pytest.mark.parametrize(
-    "text",
+    "text,language,reply,continuation",
     [
-        "Да так, посидела немного и выдохнула. А ты как?",
-        "I sat in the park for a while. How about you?",
-        "Estuve en el parque. Y tú?",
-        "Fiquei no parque um pouco. E você?",
+        (
+            "Да так, посидела немного и выдохнула. А ты как?",
+            "ru",
+            "Нормально",
+            "В парке тихо было или народу много?",
+        ),
+        (
+            "I sat in the park for a while. How about you?",
+            "en",
+            "I’m good",
+            "Was the park quiet or crowded?",
+        ),
+        (
+            "Estuve en el parque. Y tú?",
+            "es",
+            "Bien",
+            "¿El parque estaba tranquilo o lleno de gente?",
+        ),
+        (
+            "Fiquei no parque um pouco. E você?",
+            "pt",
+            "Bem",
+            "O parque estava tranquilo ou cheio de gente?",
+        ),
     ],
 )
 async def test_reciprocal_answer_delivers_its_hook_without_next_input(
-    app: Application, text: str
+    app: Application, text: str, language: str, reply: str, continuation: str
 ) -> None:
+    app.model.responses["interpret"].append(
+        {"intent": "chat", "dialogue_mode": "continuation", "language": language}
+    )
     app.model.responses["generate"].append(
         {
-            "reply": "Нормально.",
-            "continuation": "В парке тихо было или народу много?",
+            "reply": reply,
+            "continuation": continuation,
             "dialogue_act": "answer_and_question",
             "question_goal": "park_crowd",
             "question_part": "continuation",
@@ -35,10 +58,7 @@ async def test_reciprocal_answer_delivers_its_hook_without_next_input(
         }
     )
     await receive(app, app.sender, 1, text, 1, app.clock.now())
-    assert [text for _, text in app.sender.sent] == [
-        "Нормально",
-        "В парке тихо было или народу много?",
-    ]
+    assert [text for _, text in app.sender.sent] == [reply, continuation]
     data = next(data for task, data in app.model.calls if task == "generate")
     assert data["DIALOGUE_PLAN"]["requires_continuation"] is True
     assert await scalar(app, "SELECT status FROM agent_runs") == "prepared"
@@ -91,7 +111,7 @@ async def test_question_in_first_part_is_recorded_at_its_delivery(
             "question_part": "reply",
         }
     )
-    await app.telegram.ingest([update(1, "Давай про музыку.")])
+    await app.telegram.ingest([update(1, "Давай про музыку, которую слушаем вечером.")])
     await app.turn_worker.run_once()
     async with app.database.read() as tx:
         rows = await fetchall(tx, "SELECT id FROM outbox_messages ORDER BY rowid")

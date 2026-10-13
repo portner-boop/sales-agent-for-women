@@ -1,4 +1,5 @@
 import asyncio
+import errno
 import fcntl
 import hashlib
 import json
@@ -10,7 +11,10 @@ from types import TracebackType
 from typing import IO, Any
 from uuid import uuid4
 
-from app.shared.storage import Database
+from app.shared.storage import Database, fetchone
+
+BACKUP_MAX_BYTES = 1024**3
+BACKUP_MIN_FREE_BYTES = 256 * 1024**2
 
 
 class ProcessLock:
@@ -41,7 +45,8 @@ class ProcessLock:
 
 
 def digest(path: Path) -> str:
-    return hashlib.sha256(path.read_bytes()).hexdigest()
+    with path.open("rb") as stream:
+        return hashlib.file_digest(stream, "sha256").hexdigest()
 
 
 def verify_backup(directory: Path) -> dict[str, Any]:
@@ -66,25 +71,66 @@ def verify_backup(directory: Path) -> dict[str, Any]:
 async def create_backup(database: Database, deletion_path: Path, now: float) -> Path:
     root = database.path.parent / "backups"
     root.mkdir(exist_ok=True, mode=0o700)
+    async with database.read() as tx:
+        pages = await fetchone(tx, "PRAGMA page_count")
+        page_size = await fetchone(tx, "PRAGMA page_size")
+    assert pages is not None and page_size is not None
+    journal_size = (
+        (await asyncio.to_thread(deletion_path.stat)).st_size
+        if await asyncio.to_thread(deletion_path.exists)
+        else 0
+    )
+    expected_size = pages[0] * page_size[0] + journal_size + 4096
+    if expected_size > BACKUP_MAX_BYTES:
+        raise OSError(errno.ENOSPC, "Backup exceeds storage budget")
+    await asyncio.to_thread(prune_backups, root, BACKUP_MAX_BYTES - expected_size)
+    if shutil.disk_usage(root).free < expected_size + BACKUP_MIN_FREE_BYTES:
+        raise OSError(errno.ENOSPC, "Insufficient free space for backup")
     staging = root / f".pending-{uuid4().hex}"
     staging.mkdir(mode=0o700)
-    await database.backup(staging / "app.db")
-    if await asyncio.to_thread(deletion_path.exists):
-        shutil.copyfile(deletion_path, staging / "deletions.jsonl")
-    else:
-        (staging / "deletions.jsonl").write_text("")
-    manifest = {
-        "created_at": now,
-        "files": {
-            name: digest(staging / name) for name in ("app.db", "deletions.jsonl")
-        },
-        "checkpoint_policy": "rebuild_from_app_db",
-    }
-    (staging / "manifest.json").write_text(json.dumps(manifest))
-    verify_backup(staging)
-    target = root / f"snapshot-{int(now)}-{uuid4().hex[:8]}"
-    staging.rename(target)
-    return target
+    try:
+        await database.backup(staging / "app.db")
+        if await asyncio.to_thread(deletion_path.exists):
+            shutil.copyfile(deletion_path, staging / "deletions.jsonl")
+        else:
+            (staging / "deletions.jsonl").write_text("")
+        manifest = {
+            "created_at": now,
+            "files": {
+                name: await asyncio.to_thread(digest, staging / name)
+                for name in ("app.db", "deletions.jsonl")
+            },
+            "checkpoint_policy": "rebuild_from_app_db",
+        }
+        (staging / "manifest.json").write_text(json.dumps(manifest))
+        if backup_size(staging) > BACKUP_MAX_BYTES:
+            raise OSError(errno.ENOSPC, "Backup exceeds storage budget")
+        await asyncio.to_thread(verify_backup, staging)
+        target = root / f"snapshot-{int(now)}-{uuid4().hex[:8]}"
+        staging.rename(target)
+        await asyncio.to_thread(prune_backups, root, BACKUP_MAX_BYTES)
+        return target
+    finally:
+        if staging.exists():
+            shutil.rmtree(staging)
+
+
+def backup_size(directory: Path) -> int:
+    return sum(path.stat().st_size for path in directory.iterdir() if path.is_file())
+
+
+def prune_backups(root: Path, max_bytes: int) -> None:
+    snapshots = sorted(
+        (path for path in root.glob("snapshot-*") if path.is_dir()),
+        key=lambda path: path.stat().st_mtime_ns,
+    )
+    sizes = {path: backup_size(path) for path in snapshots}
+    total = sum(sizes.values())
+    for path in snapshots[:-1]:
+        if total <= max_bytes:
+            break
+        shutil.rmtree(path)
+        total -= sizes[path]
 
 
 def restore_backup(backup: Path, directory: Path) -> None:

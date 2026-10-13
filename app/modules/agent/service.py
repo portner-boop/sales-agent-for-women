@@ -1,6 +1,5 @@
 import asyncio
 import logging
-import random
 from collections import defaultdict
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass, field
@@ -9,6 +8,13 @@ from typing import Any, TypedDict
 from langgraph.graph import END, START, StateGraph
 from pydantic import ValidationError
 
+from app.modules.agent.capabilities import (
+    is_contact_request,
+    is_photo_request,
+    is_standalone_photo_request,
+    photo_language,
+    photo_refusal,
+)
 from app.modules.agent.context import ContextBuilder
 from app.modules.agent.entities import (
     BuiltContext,
@@ -21,6 +27,7 @@ from app.modules.agent.errors import (
     ModelOutputError,
     ReplyRejectedError,
 )
+from app.modules.agent.language import language_instruction, reply_language
 from app.modules.agent.prompts import (
     FOLLOWUP_RULES,
     FOLLOWUP_VALIDATOR_RULES,
@@ -30,23 +37,38 @@ from app.modules.agent.prompts import (
     PLATFORM_TRANSITION_RULES,
     VALIDATOR_RULES,
 )
-from app.modules.agent.recovery import failure_code, retry_delay, structure_errors
+from app.modules.agent.recovery import (
+    activity_reply,
+    failure_code,
+    retry_delay,
+    structure_errors,
+    unavailable_reply,
+)
 from app.modules.agent.repository import AgentRepository
 from app.modules.agent.schemas import (
     ContinuingReplyProposal,
     FollowupProposal,
+    RecoveryReplyProposal,
     ReplyProposal,
     SemanticVerdict,
     TurnInterpretation,
 )
-from app.modules.agent.style import strip_terminal_period
+from app.modules.agent.style import refine_day_question, strip_terminal_period
+from app.modules.agent.time import standalone_time_reply
 from app.modules.agent.validation import needs_semantic_validation, validate_reply
+from app.modules.commerce.requests import (
+    declines_platform_link,
+    platform_request_language,
+    requests_platform_info,
+    requests_platform_link_again,
+)
 from app.modules.commerce.service import CommerceService
 from app.modules.conversations.entities import Conversation, Turn
 from app.modules.conversations.repository import ConversationRepository
 from app.modules.conversations.service import ConversationService
 from app.modules.delivery.repository import DeliveryRepository
 from app.modules.delivery.schemas import OutboxDraft
+from app.modules.delivery.timing import response_delays
 from app.modules.followups.entities import FollowupTicket
 from app.modules.jobs.entities import Job
 from app.modules.memory.service import MemoryService
@@ -57,6 +79,11 @@ from app.shared.entities import (
     EvidenceError,
     ScopeContext,
     StaleStateError,
+)
+from app.shared.identity import (
+    asks_technical_identity,
+    contains_identity_disclosure,
+    identity_reply,
 )
 from app.shared.storage import Transaction, fetchone
 
@@ -77,6 +104,7 @@ class ActiveRun:
     conversation: Conversation
     deadline: float
     started: float
+    response_received_at: float | None = None
     calls: int = 0
     retries: int = 0
     llm_events: list[dict[str, Any]] = field(default_factory=list)
@@ -87,6 +115,7 @@ class ActiveRun:
     proposal: ReplyProposal | None = None
     followup: FollowupTicket | None = None
     on_prepared: Callable[[Transaction], Awaitable[None]] | None = None
+    recovering: bool = False
 
 
 class AgentService:
@@ -153,6 +182,8 @@ class AgentService:
         data: dict[str, Any],
         schema: type[SchemaT],
     ) -> SchemaT:
+        if task in {"generate", "repair", "recover", "followup"}:
+            rules += language_instruction(data["APPLICATION_STATE"]["language"])
         for attempt in range(2):
             current = await self.conversation_service.current(run.turn)
             async with self.repository.database.read() as tx:
@@ -336,6 +367,7 @@ class AgentService:
                 conversation,
                 started + limit,
                 started,
+                response_received_at=self.clock.now(),
                 interpretation=TurnInterpretation(
                     intent="continue_after_silence",
                     dialogue_mode="continuation",
@@ -413,9 +445,17 @@ class AgentService:
             turn = await self.conversations.claim_turn(job.scope, self.clock.now())
             if turn is None:
                 return
+            platform_info_requested = await self._platform_info_requested(turn)
             async with self.repository.database.read() as tx:
                 killed = await self.delivery.is_killed(tx)
-            if killed or not self.commerce.can_reply(conversation):
+            if killed or (
+                not self.commerce.can_reply(conversation)
+                and not (
+                    platform_info_requested
+                    and conversation.control_state == "enabled"
+                    and conversation.purchase_state != "confirmed"
+                )
+            ):
 
                 async def skip(tx: Transaction) -> None:
                     await self.conversations.finish_turn(tx, turn, "skipped")
@@ -438,26 +478,42 @@ class AgentService:
                     raise ValueError("Invalid retry request time")
                 received_at = max(received_at, retry_requested_at)
             queued = max(0, self.clock.now() - received_at)
-            run = ActiveRun(turn, conversation, started + limit, started)
+            if (
+                self.settings.reply_pacing_enabled
+                and conversation.first_reply_at is None
+            ):
+                limit = min(
+                    limit, max(0, self.settings.first_reply_max_seconds - queued)
+                )
+            run = ActiveRun(
+                turn,
+                conversation,
+                started + limit,
+                started,
+                response_received_at=received_at,
+            )
             identifier = await self.repository.start(turn, self.clock.now())
             self.active[identifier] = run
             status, code = "prepared", None
             try:
                 async with asyncio.timeout(limit):
-                    await self.graph.ainvoke(
-                        {
-                            "run_id": identifier,
-                            "turn_id": turn.id,
-                            "scope_id": turn.scope.scope_id,
-                            "epoch": turn.scope.epoch,
-                            "phase": "start",
-                        },
-                        {
-                            "configurable": {
-                                "thread_id": f"{turn.scope.scope_id}:{turn.scope.epoch}"
-                            }
-                        },
-                    )
+                    if platform_info_requested:
+                        await self._prepare_platform_info(run)
+                    else:
+                        await self.graph.ainvoke(
+                            {
+                                "run_id": identifier,
+                                "turn_id": turn.id,
+                                "scope_id": turn.scope.scope_id,
+                                "epoch": turn.scope.epoch,
+                                "phase": "start",
+                            },
+                            {
+                                "configurable": {
+                                    "thread_id": f"{turn.scope.scope_id}:{turn.scope.epoch}"
+                                }
+                            },
+                        )
             except StaleStateError:
                 status, code = "cancelled", "STALE_STATE"
             except asyncio.CancelledError:
@@ -472,13 +528,22 @@ class AgentService:
                         "reason": (
                             str(error)[:256]
                             if type(error)
-                            in {ValueError, EvidenceError, ContextOverflowError}
+                            in {
+                                ValueError,
+                                EvidenceError,
+                                ContextOverflowError,
+                                ReplyRejectedError,
+                            }
                             else None
                         ),
                     }
                 )
                 try:
-                    if isinstance(error, (ValueError, EvidenceError)):
+                    if self._has_photo_request(run):
+                        await self._fallback(run, code)
+                        run.validation_events.append({"stage": "photo_failure_refusal"})
+                        status, code = "prepared", None
+                    elif isinstance(error, (ValueError, EvidenceError)):
                         await self._recover(identifier, error)
                         status, code = "prepared", None
                     else:
@@ -514,14 +579,104 @@ class AgentService:
                     code,
                 )
 
+    async def _platform_info_requested(self, turn: Turn) -> bool:
+        direct = [
+            message
+            for message in turn.messages
+            if not message.metadata.get("forwarded")
+        ]
+        if direct and declines_platform_link(direct[-1].text):
+            return False
+        if any(requests_platform_info(message.text) for message in direct):
+            return True
+        if not any(requests_platform_link_again(message.text) for message in direct):
+            return False
+        history = await self.conversations.messages(turn.scope)
+        delivered = [message for message in history if message.role != "user"]
+        return any(
+            "behappy2day" in message.text.casefold() for message in delivered[-3:]
+        )
+
+    async def _prepare_platform_info(self, run: ActiveRun) -> None:
+        async def prepare(tx: Transaction) -> None:
+            current = await self.conversations.get(run.turn.scope.scope_id, tx)
+            if (
+                current.scope != run.turn.scope
+                or current.input_revision != run.turn.input_revision
+                or current.snapshot.control_revision
+                != run.conversation.snapshot.control_revision
+                or current.control_state != "enabled"
+                or current.purchase_state == "confirmed"
+                or await self.delivery.is_killed(tx)
+            ):
+                raise StaleStateError("Platform information request changed")
+            language = platform_request_language(
+                " ".join(message.text for message in run.turn.messages),
+                current.language,
+            )
+            text = self.commerce.platform_info_text(language)
+            now = self.clock.now()
+            delay = self._reply_delays(run, (text,), current, now)[0]
+            await tx.execute(
+                "UPDATE conversations SET language=? WHERE id=? AND epoch=?",
+                (language, current.id, current.epoch),
+            )
+            await self.delivery.prepare(
+                tx,
+                current.snapshot,
+                OutboxDraft(
+                    action_key=f"platform-info:{run.turn.id}",
+                    kind="service",
+                    text=text,
+                    deadline=now + delay + 30,
+                    delay_seconds=delay,
+                ),
+                now,
+                {
+                    "origin": "platform_info",
+                    "reply": text,
+                    "dialogue_act": "platform_info",
+                    "question_goal": None,
+                    "followup_allowed": False,
+                },
+                run.turn.id,
+            )
+            await self.conversations.finish_turn(tx, run.turn, "prepared")
+
+        await self.repository.database.write(prepare)
+        run.validation_events.append({"stage": "server_platform_info"})
+
     async def _interpret(self, state: GraphState) -> dict[str, str]:
         run = self.active[state["run_id"]]
+        text = " ".join(message.text for message in run.turn.messages)
+        time_reply = self._time_reply(run)
+        if time_reply is not None:
+            run.interpretation = TurnInterpretation(
+                intent="current_time",
+                dialogue_mode="service",
+                language=self._input_language(run),
+            )
+            return {"phase": "interpreted"}
+        if self._standalone_photo_request(run):
+            run.interpretation = TurnInterpretation(
+                intent="photo_request",
+                dialogue_mode="continuation",
+                language=photo_language(text, self._input_language(run)),
+            )
+            return {"phase": "interpreted"}
         data = await self.builder.interpreter_data(run.turn, run.conversation)
         run.interpreter_context = data
         if self.builder.interpreter_tokens(data) > self.builder.settings.context_tokens:
             raise ContextOverflowError("Interpreter context exceeds its budget")
         run.interpretation = await self._call(
             run, "interpret", INTERPRETER_RULES, data, TurnInterpretation
+        )
+        run.interpretation = run.interpretation.model_copy(
+            update={
+                "language": reply_language(
+                    text, run.conversation.language, run.interpretation.language
+                )
+            }
         )
         return {"phase": "interpreted"}
 
@@ -676,6 +831,22 @@ class AgentService:
     async def _generate(self, state: GraphState) -> dict[str, str]:
         run = self.active[state["run_id"]]
         assert run.context is not None
+        time_reply = self._time_reply(run)
+        if time_reply is not None:
+            run.proposal = ReplyProposal(reply=time_reply, dialogue_act="current_time")
+            return {"phase": "generated"}
+        if any(asks_technical_identity(message.text) for message in run.turn.messages):
+            run.proposal = ReplyProposal(
+                reply=self._identity_reply(run),
+                dialogue_act="identity_boundary",
+            )
+            return {"phase": "generated"}
+        if self._standalone_photo_request(run):
+            run.proposal = ReplyProposal(
+                reply=photo_refusal(run.conversation.language),
+                dialogue_act="photo_refusal",
+            )
+            return {"phase": "generated"}
         run.proposal = await self._call(
             run,
             "generate",
@@ -693,6 +864,86 @@ class AgentService:
         self, run: ActiveRun, stage: str, task: str, force_semantic: bool = False
     ) -> list[str]:
         assert run.context and run.proposal and run.interpretation
+        time_reply = self._time_reply(run)
+        if time_reply is not None:
+            run.proposal = ReplyProposal(reply=time_reply, dialogue_act="current_time")
+            run.context.data["DIALOGUE_PLAN"]["requires_continuation"] = False
+            run.validation_events.append({"stage": stage + "_server_time"})
+            return []
+        if run.recovering:
+            run.context.data["DIALOGUE_PLAN"]["requires_continuation"] = False
+        if any(
+            asks_technical_identity(message.text) for message in run.turn.messages
+        ) or contains_identity_disclosure(run.proposal.full_reply):
+            photo_boundary = self._has_photo_request(run) and not any(
+                asks_technical_identity(message.text) for message in run.turn.messages
+            )
+            run.proposal = (
+                FollowupProposal(should_send=False, dialogue_act="identity_boundary")
+                if run.followup is not None
+                else ReplyProposal(
+                    reply=(
+                        photo_refusal(run.conversation.language)
+                        if photo_boundary
+                        else self._identity_reply(run)
+                    ),
+                    dialogue_act=(
+                        "photo_refusal" if photo_boundary else "identity_boundary"
+                    ),
+                )
+            )
+            run.context.data["DIALOGUE_PLAN"]["requires_continuation"] = False
+            run.validation_events.append({"stage": stage + "_identity_guard"})
+            return []
+        if self._standalone_photo_request(run):
+            run.proposal = ReplyProposal(
+                reply=photo_refusal(run.conversation.language),
+                dialogue_act="photo_refusal",
+            )
+            run.context.data["DIALOGUE_PLAN"]["requires_continuation"] = False
+            run.validation_events.append({"stage": stage + "_photo_refusal"})
+            return []
+        if (
+            run.followup is None
+            and run.proposal.continuation is not None
+            and run.proposal.question_goal is None
+            and "?" not in run.proposal.full_reply
+            and any(
+                not message.metadata.get("forwarded")
+                and is_contact_request(message.text)
+                for message in run.turn.messages
+            )
+        ):
+            run.proposal = run.proposal.model_copy(
+                update={
+                    "reply": run.proposal.reply.rstrip(". ")
+                    + ". "
+                    + run.proposal.continuation,
+                    "continuation": None,
+                    "question_part": None,
+                    "followup_allowed": False,
+                }
+            )
+            run.context.data["DIALOGUE_PLAN"]["requires_continuation"] = False
+        if run.interpretation.dialogue_mode != "closing":
+            user_text = " ".join(message.text for message in run.turn.messages)
+            for field_name in ("reply", "continuation"):
+                part = getattr(run.proposal, field_name)
+                if part is None:
+                    continue
+                refined, question_changed = refine_day_question(part, user_text)
+                if refined != part:
+                    changes: dict[str, Any] = {field_name: refined}
+                    if question_changed:
+                        changes.update(
+                            question_goal="how_day_is_going",
+                            question_time_scope="today",
+                            question_part=field_name,
+                        )
+                    run.proposal = run.proposal.model_copy(update=changes)
+                    run.validation_events.append(
+                        {"stage": stage + "_day_wording", "part": field_name}
+                    )
         run.proposal = run.proposal.model_copy(
             update={
                 "reply": strip_terminal_period(run.proposal.reply),
@@ -709,17 +960,12 @@ class AgentService:
         ):
             run.proposal = run.proposal.model_copy(
                 update={
-                    "reply": self.commerce.transition_text(run.conversation.language),
-                    "continuation": None,
                     "platform_transition": True,
                     "requested_action": "none",
                     "dialogue_act": "platform_redirect",
                     "question_goal": None,
                     "question_part": None,
                     "followup_allowed": False,
-                    "new_commitment_candidate": None,
-                    "used_memory_ids": [],
-                    "used_source_message_ids": [],
                 }
             )
         if run.proposal.question_goal:
@@ -734,13 +980,9 @@ class AgentService:
             )
         errors = validate_reply(run.proposal, run.context)
         run.validation_events.append({"stage": stage + "_static", "errors": errors})
-        if run.proposal.platform_transition and not errors:
-            run.validation_events.append(
-                {"stage": stage + "_server_transition", "decision": "accept"}
-            )
-            return []
         if not errors and (
             force_semantic
+            or run.proposal.platform_transition
             or run.followup is not None
             or needs_semantic_validation(run.proposal, run.interpretation, run.context)
         ):
@@ -761,6 +1003,8 @@ class AgentService:
 
     def _reply_schema(self, run: ActiveRun) -> type[ReplyProposal]:
         assert run.context is not None
+        if run.recovering:
+            return RecoveryReplyProposal
         if run.followup is not None:
             return FollowupProposal
         return (
@@ -805,6 +1049,7 @@ class AgentService:
         remaining = self._remaining(run)
         if self.settings.llm_max_calls - run.calls < 2:
             raise CallBudgetError("Recovery requires generation and independent check")
+        run.recovering = True
         async with asyncio.timeout(remaining):
             run.conversation = await self.conversation_service.current(run.turn)
             if run.context is None:
@@ -816,12 +1061,13 @@ class AgentService:
                 )
                 await self._build_context(run)
             assert run.context is not None
+            run.context.data["DIALOGUE_PLAN"]["requires_continuation"] = False
             run.proposal = await self._call(
                 run,
                 "recover",
                 GENERATOR_RULES
                 + PLATFORM_TRANSITION_RULES
-                + "\nRECOVERY: Answer the actual current input conservatively using originals and active boundaries. Do not invent details or claim a rejected memory patch was stored. If meaning is genuinely ambiguous, ask one concrete clarification when questions are allowed. Otherwise give a brief relevant response. Avoid the rejected claims entirely; keep current language and layout. No generic error apology, service paragraph or invented excuse. This candidate will be independently checked.",
+                + "\nRECOVERY: Return one concise answer to the actual current input using originals and active boundaries. continuation=null, followup_allowed=false, requested_action=none. This recovery contract overrides ordinary layout and initiative guidance. Do not add a new topic, reciprocal question, invitation or hook. A question is allowed only when the current request cannot be understood without one concrete clarification and boundaries allow it; otherwise question_goal=null and question_part=null. Do not invent details or claim a rejected memory patch was stored. Avoid rejected claims entirely. For questions about your day or activity, answering within the current chat is legitimate; do not invent off-screen events or all-day availability. No generic error apology, service paragraph or invented excuse. This candidate will be independently checked.",
                 {
                     **run.context.data,
                     "RECOVERY_FAILURE": failure_code(error),
@@ -856,6 +1102,21 @@ class AgentService:
             )
             run.validation_events.append({"stage": "recovered"})
 
+    def _reply_delays(
+        self,
+        run: ActiveRun,
+        parts: tuple[str, ...],
+        conversation: Conversation,
+        now: float,
+    ) -> tuple[float, ...]:
+        return response_delays(
+            parts,
+            run.response_received_at if run.response_received_at is not None else now,
+            now,
+            conversation.first_reply_at is None and run.followup is None,
+            self.settings,
+        )
+
     async def _prepare(self, state: GraphState) -> dict[str, str]:
         run = self.active[state["run_id"]]
         assert run.proposal and run.context
@@ -873,14 +1134,6 @@ class AgentService:
             if kind == "offer"
             else proposal.parts
         )
-        pause = (
-            random.uniform(
-                self.settings.reply_pause_min_seconds,
-                self.settings.reply_pause_max_seconds,
-            )
-            if len(parts) == 2
-            else 0
-        )
 
         async def prepare(tx: Transaction) -> None:
             current = await self.conversations.get(conversation.id, tx)
@@ -892,11 +1145,7 @@ class AgentService:
             remaining = run.deadline - asyncio.get_running_loop().time()
             if remaining <= 0:
                 raise TimeoutError("Turn deadline expired before outbox commit")
-            deadline = self.clock.now() + 30 + pause
-            if run.followup is not None:
-                deadline = min(deadline, run.followup.expires_at)
-                if self.clock.now() >= deadline:
-                    raise StaleStateError("Follow-up expired before outbox commit")
+            now = self.clock.now()
             inflight = await fetchone(
                 tx,
                 "SELECT COUNT(*) n FROM outbox_messages WHERE scope_id=? AND epoch=? AND kind='reply' AND status='sending' AND predecessor_id IS NULL AND turn_id IS NOT NULL AND COALESCE(json_extract(proposal_json,'$.origin'),'')!='followup'",
@@ -921,11 +1170,14 @@ class AgentService:
                 if proposal.platform_transition and not allowed and not limit_required:
                     raise StaleStateError("Platform transition is not allowed")
                 text = (
-                    self.commerce.transition_text(current.language)
+                    self.commerce.transition_text(current.language, proposal.full_reply)
                     if allowed
-                    else self.commerce.farewell_text(current.language)
+                    else self.commerce.farewell_text(
+                        current.language, proposal.full_reply
+                    )
                 )
                 origin = "platform_redirect" if allowed else "preview_closing"
+                delay = self._reply_delays(run, (text,), current, now)[0]
                 await self.commerce.repository.close_preview(
                     tx, current.scope, self.clock.now()
                 )
@@ -939,7 +1191,8 @@ class AgentService:
                         action_key=f"platform-preview:{current.id}:{current.epoch}",
                         kind="service",
                         text=text,
-                        deadline=deadline,
+                        deadline=now + delay + 30,
+                        delay_seconds=delay,
                     ),
                     self.clock.now(),
                     {
@@ -947,10 +1200,22 @@ class AgentService:
                         "transition_trigger": "limit" if limit_required else "agent",
                         "completed_replies": current.preview_reply_count,
                         "dialogue_act": "platform_redirect",
+                        "reply": text,
+                        "answer": proposal.full_reply,
+                        "used_memory_ids": proposal.used_memory_ids,
+                        "used_source_message_ids": proposal.used_source_message_ids,
+                        "followup_allowed": False,
                     },
+                    run.turn.id,
                 )
                 await self.conversations.finish_turn(tx, run.turn, "prepared")
                 return
+            delays = self._reply_delays(run, parts, current, now)
+            deadline = now + 30 + sum(delays)
+            if run.followup is not None:
+                deadline = min(deadline, run.followup.expires_at)
+                if now + sum(delays) >= deadline:
+                    raise StaleStateError("Follow-up expired before outbox commit")
             predecessor_id = None
             for index, text in enumerate(parts):
                 metadata: dict[str, Any] = (
@@ -984,7 +1249,7 @@ class AgentService:
                         text=text,
                         deadline=deadline,
                         predecessor_id=predecessor_id,
-                        delay_seconds=pause if index else 0,
+                        delay_seconds=delays[index],
                     ),
                     self.clock.now(),
                     metadata,
@@ -997,57 +1262,124 @@ class AgentService:
         await self.repository.database.write(prepare)
         return {"phase": "prepared"}
 
+    def _identity_reply(self, run: ActiveRun) -> str:
+        recent = (
+            [
+                item["text"]
+                for item in run.context.data["RECENT_MESSAGES"]
+                if item["role"] != "user"
+            ]
+            if run.context is not None
+            else []
+        )
+        return identity_reply(self._input_language(run), recent)
+
     def _input_language(self, run: ActiveRun) -> str:
         if not run.turn.messages:
             return run.conversation.language
-        letters = [
-            char.lower() for char in run.turn.messages[-1].text if char.isalpha()
-        ]
-        if (
-            letters
-            and sum("а" <= char <= "я" or char == "ё" for char in letters)
-            > len(letters) / 2
-        ):
-            return "ru"
+        return reply_language(
+            run.turn.messages[-1].text,
+            run.conversation.language,
+            run.interpretation.language if run.interpretation is not None else None,
+        )
+
+    def _time_reply(self, run: ActiveRun) -> str | None:
+        if run.followup is not None or len(run.turn.messages) != 1:
+            return None
+        message = run.turn.messages[0]
+        if message.metadata.get("forwarded"):
+            return None
+        return standalone_time_reply(
+            message.text, self.clock.now(), self._input_language(run)
+        )
+
+    def _standalone_photo_request(self, run: ActiveRun) -> bool:
         return (
-            run.interpretation.language
-            if run.interpretation is not None
-            else run.conversation.language
+            run.followup is None
+            and all(
+                not message.metadata.get("forwarded") for message in run.turn.messages
+            )
+            and is_standalone_photo_request(
+                " ".join(message.text for message in run.turn.messages)
+            )
+        )
+
+    def _has_photo_request(self, run: ActiveRun) -> bool:
+        return any(
+            not message.metadata.get("forwarded") and is_photo_request(message.text)
+            for message in run.turn.messages
         )
 
     async def _fallback(self, run: ActiveRun, code: str) -> None:
-        texts = {
-            "ru": "Связь с сервисом ответов прервалась. Сообщение сохранено, но ответ сейчас недоступен.",
-            "en": "The reply service is unavailable. Your message is saved, but I cannot answer right now.",
-            "es": "El servicio de respuestas no está disponible. Tu mensaje está guardado, pero ahora no puedo responder.",
-            "pt": "O serviço de respostas está indisponível. Sua mensagem foi salva, mas agora não posso responder.",
-        }
-        if not code.startswith("GATEWAY_") and code != "DEADLINE_EXCEEDED":
-            texts = {
-                "ru": "Не получилось надёжно обработать это сообщение. Оно сохранено, но я пока не могу на него ответить.",
-                "en": "I cannot reliably process this message. It is saved, but I cannot answer it yet.",
-                "es": "No puedo procesar este mensaje de forma fiable. Está guardado, pero aún no puedo responder.",
-                "pt": "Não consigo processar esta mensagem com segurança. Ela foi salva, mas ainda não posso responder.",
-            }
+        photo_requested = self._has_photo_request(run)
+        language = self._input_language(run)
+        identity_text = None
+        if any(asks_technical_identity(message.text) for message in run.turn.messages):
+            history = await self.conversations.messages(run.turn.scope)
+            identity_text = identity_reply(
+                language,
+                [message.text for message in history if message.role != "user"],
+            )
+        activity_text = (
+            activity_reply(run.turn.messages[0].text, language)
+            if len(run.turn.messages) == 1
+            and not run.turn.messages[0].metadata.get("forwarded")
+            else None
+        )
 
         async def prepare(tx: Transaction) -> None:
             current = await self.conversations.get(run.turn.scope.scope_id, tx)
             if (
                 current.scope != run.turn.scope
                 or current.input_revision != run.turn.input_revision
+                or current.snapshot.control_revision
+                != run.conversation.snapshot.control_revision
+                or await self.delivery.is_killed(tx)
             ):
                 return
             if self.commerce.can_reply(current):
+                text = (
+                    photo_refusal(
+                        photo_language(
+                            " ".join(message.text for message in run.turn.messages),
+                            self._input_language(run),
+                        )
+                    )
+                    if photo_requested
+                    else identity_text
+                    or self._time_reply(run)
+                    or activity_text
+                    or unavailable_reply(language)
+                )
                 await self.delivery.prepare(
                     tx,
                     current.snapshot,
                     OutboxDraft(
                         action_key=f"fallback:{run.turn.id}",
-                        kind="service",
-                        text=texts.get(self._input_language(run), texts["en"]),
+                        kind="reply" if photo_requested else "service",
+                        text=text,
                         deadline=self.clock.now() + 30,
                     ),
                     self.clock.now(),
+                    (
+                        {
+                            "reply": text,
+                            "dialogue_act": "photo_refusal",
+                            "question_goal": None,
+                            "followup_allowed": False,
+                        }
+                        if photo_requested
+                        else {
+                            "origin": "response_recovery",
+                            "reply": text,
+                            "dialogue_act": (
+                                "current_activity" if activity_text else "unavailable"
+                            ),
+                            "question_goal": None,
+                            "followup_allowed": False,
+                            "error_code": code,
+                        }
+                    ),
                     turn_id=run.turn.id,
                 )
             await self.conversations.finish_turn(tx, run.turn, "prepared")

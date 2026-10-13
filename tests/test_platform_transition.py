@@ -84,7 +84,7 @@ async def test_agent_selects_moment_and_server_owns_copy_and_stops_next_generati
     await seed_count(app)
     app.model.responses["generate"].append(
         {
-            "reply": "A fabricated price or human promise",
+            "reply": "I’m enjoying our conversation",
             "dialogue_act": "reaction",
             "platform_transition": True,
         }
@@ -92,7 +92,7 @@ async def test_agent_selects_moment_and_server_owns_copy_and_stops_next_generati
     await send_turn(app, 2)
     current = await conversation(app)
     assert current.preview_closed_at is not None
-    assert app.sender.sent[-1][1] == app.commerce.transition_text("en")
+    assert app.sender.sent[-1][1].endswith("\n\n" + app.commerce.transition_text("en"))
     assert "real men" not in app.sender.sent[-1][1]
     calls = len(app.model.calls)
     await send_turn(app, 3)
@@ -120,7 +120,7 @@ async def test_optional_choice_can_defer_but_twentieth_response_is_transition(
     assert (await conversation(app)).preview_closed_at is None
     await send_turn(app, 9)
     assert (await conversation(app)).preview_closed_at is not None
-    assert app.sender.sent[-1][1] == app.commerce.transition_text("en")
+    assert app.sender.sent[-1][1].endswith("\n\n" + app.commerce.transition_text("en"))
 
 
 async def test_premature_model_decision_is_repaired_without_closing(
@@ -216,8 +216,10 @@ async def test_transition_text_does_not_disclose_conditions_or_claim_same_person
 ) -> None:
     text = app.commerce.transition_text(language)
     assert "BeHappy2Day" in text
+    body, link = text.rsplit("\n", 1)
+    assert link == "https://www.behappy2day.com/"
     assert not any(
-        word in text.lower()
+        word in body.lower()
         for word in (
             "12",
             "20",
@@ -249,7 +251,9 @@ async def test_current_refusal_is_applied_before_transition_decision(
     await app.turn_worker.run_once()
     await app.delivery.run_once()
     assert (await conversation(app)).preview_closed_at is not None
-    assert app.sender.sent[-1][1] == app.commerce.farewell_text("en")
+    assert app.sender.sent[-1][1] == app.commerce.farewell_text(
+        "en", "Understood. Take care"
+    )
     assert "BeHappy2Day" not in app.sender.sent[-1][1]
     assert (
         await scalar(
@@ -280,7 +284,10 @@ async def test_restart_preserves_count_closed_state_and_pending_notice(
         assert (await conversation(reopened)).preview_reply_count == 19
         assert not reopened.commerce.can_reply(await conversation(reopened))
         await reopened.delivery.run_once()
-        assert reopened.sender.sent == [(1, reopened.commerce.transition_text("en"))]
+        assert len(reopened.sender.sent) == 1
+        assert reopened.sender.sent[0][1].endswith(
+            "\n\n" + reopened.commerce.transition_text("en")
+        )
         await reopened.delivery.run_once()
         assert len(reopened.sender.sent) == 1
     finally:
@@ -331,17 +338,23 @@ async def test_delivery_count_changed_during_generation_still_enforces_maximum(
     await task
     await app.delivery.run_once()
     assert (await conversation(app)).preview_closed_at is not None
-    assert app.sender.sent[-1][1] == app.commerce.transition_text("en")
+    assert app.sender.sent[-1][1].endswith("\n\n" + app.commerce.transition_text("en"))
 
 
-async def test_fixed_transition_does_not_call_semantic_critic(app: Application) -> None:
+async def test_transition_answer_is_checked_by_semantic_critic(
+    app: Application,
+) -> None:
     await seed_count(app)
     app.model.responses["generate"].append(
         {"reply": "done", "dialogue_act": "closing", "platform_transition": True}
     )
     await send_turn(app, 2)
-    assert [task for task, _ in app.model.calls] == ["interpret", "generate"]
-    assert app.sender.sent[-1][1] == app.commerce.transition_text("en")
+    assert [task for task, _ in app.model.calls] == [
+        "interpret",
+        "generate",
+        "validate",
+    ]
+    assert app.sender.sent[-1][1].endswith("\n\n" + app.commerce.transition_text("en"))
 
 
 async def test_unconfirmed_inflight_previous_reply_cannot_push_past_maximum(

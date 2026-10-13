@@ -101,15 +101,34 @@ async def test_ungrounded_claims_trigger_critic_even_without_declared_sources(
         {"decision": "reject", "reason_codes": ["CANON_CONFLICT"]}
     )
     app.model.responses["repair"].append(
-        {"reply": "Glad to hear that.", "dialogue_act": "acknowledge"}
+        {
+            "reply": (
+                "Рад это слышать."
+                if text.startswith("У меня")
+                else "Glad to hear that."
+            ),
+            "dialogue_act": "acknowledge",
+        }
     )
-    await app.telegram.ingest([update(1, "hello")])
+    await app.telegram.ingest(
+        [
+            update(
+                1,
+                (
+                    "Привет, как проходит вечер?"
+                    if text.startswith("У меня")
+                    else "hello, how is your evening?"
+                ),
+            )
+        ]
+    )
     await app.drain()
     assert [name for name, _ in app.model.calls] == [
         "interpret",
         "generate",
         "validate",
         "repair",
+        "validate_repair",
     ]
     assert app.sender.sent[0][1] != text
     assert await scalar(app, "SELECT status FROM agent_runs") == "prepared"

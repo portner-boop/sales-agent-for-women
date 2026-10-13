@@ -31,10 +31,10 @@ SERVICE_TEXTS = {
         "pt": "Comandos disponíveis: /start — iniciar, /stop — parar, /privacy — condições, /forget — apagar memórias.",
     },
     "start": {
-        "ru": "Я Марко, виртуальный собеседник. Здесь доступна тестовая переписка. /start — начать или возобновить разговор, /stop — остановить, /privacy — условия, /forget — удалить память.",
-        "en": "I'm Marko, a virtual companion. This is a test chat. /start starts or resumes a conversation, /stop stops messages, /privacy shows data terms, /forget deletes memory.",
-        "es": "Soy Marko, un compañero virtual. Este es un chat de prueba. /start inicia o reanuda la conversación, /stop detiene mensajes, /privacy muestra condiciones, /forget elimina recuerdos.",
-        "pt": "Sou Marko, um companheiro virtual. Este é um chat de teste. /start inicia ou retoma a conversa, /stop interrompe mensagens, /privacy mostra condições, /forget apaga memórias.",
+        "ru": "Я Марко. Здесь доступна тестовая переписка. /start — начать или возобновить разговор, /stop — остановить, /privacy — условия, /forget — удалить память.",
+        "en": "I'm Marko. This is a test chat. /start starts or resumes a conversation, /stop stops messages, /privacy shows data terms, /forget deletes memory.",
+        "es": "Soy Marko. Este es un chat de prueba. /start inicia o reanuda la conversación, /stop detiene mensajes, /privacy muestra condiciones, /forget elimina recuerdos.",
+        "pt": "Sou Marko. Este é um chat de teste. /start inicia ou retoma a conversa, /stop interrompe mensagens, /privacy mostra condições, /forget apaga memórias.",
     },
     "stop": {
         "ru": "Переписка остановлена. Память сохранена. Возобновить можно через /start.",
@@ -49,10 +49,10 @@ SERVICE_TEXTS = {
         "pt": "Memórias apagadas. Usa /start para iniciar uma nova conversa.",
     },
     "handoff": {
-        "ru": "Тестовая покупка подтверждена без списания. Ответы виртуального персонажа остановлены. Передача человеку здесь имитируется; реальный оператор не подключён.",
-        "en": "Test purchase confirmed without a charge. Virtual character replies are stopped. Handoff is simulated; no human operator is connected.",
-        "es": "Compra de prueba confirmada sin cobro. El personaje virtual dejó de responder. La transferencia es simulada; no hay operador conectado.",
-        "pt": "Compra de teste confirmada sem cobrança. As respostas do personagem virtual pararam. A transferência é simulada; nenhum operador está conectado.",
+        "ru": "Тестовая покупка подтверждена без списания. Переписка остановлена. Передача человеку здесь имитируется; реальный оператор не подключён.",
+        "en": "Test purchase confirmed without a charge. Replies are stopped. Handoff is simulated; no human operator is connected.",
+        "es": "Compra de prueba confirmada sin cobro. Las respuestas se han detenido. La transferencia es simulada; no hay operador conectado.",
+        "pt": "Compra de teste confirmada sem cobrança. As respostas foram interrompidas. A transferência é simulada; nenhum operador está conectado.",
     },
     "unsupported": {
         "ru": "В этом прототипе доступны только текстовые сообщения. Содержание фото и голосовых я не вижу.",
@@ -319,10 +319,10 @@ class TelegramService:
             )
         elif command == "privacy":
             texts = {
-                "ru": f"Это тестовый AI-чат. Сообщения передаются настроенному LLM-шлюзу и хранятся локально до {self.retention_days} дней с последней активности. /stop останавливает переписку; /forget удаляет сообщения и память. Резервные копии удаляются по тому же сроку. Минимальные записи удаления сохраняются. Не отправляйте чувствительные персональные данные.",
-                "en": f"This is a test AI chat. Messages are sent to the configured LLM gateway and stored locally for up to {self.retention_days} days after last activity. /stop pauses messages; /forget deletes conversation memory. Backups expire under the same retention policy. Minimal deletion records remain. Do not send sensitive personal data.",
-                "es": f"Chat de prueba con IA. Los mensajes se envían al proveedor LLM y se guardan localmente hasta {self.retention_days} días tras la última actividad. /stop pausa; /forget elimina mensajes y recuerdos. Las copias caducan con el mismo plazo. Los registros mínimos de eliminación se conservan. No envíes datos sensibles.",
-                "pt": f"Chat de teste com IA. Mensagens são enviadas ao provedor LLM e guardadas localmente até {self.retention_days} dias após a última atividade. /stop pausa; /forget apaga mensagens e memórias. Cópias expiram no mesmo prazo. Registros mínimos de exclusão são mantidos. Não envie dados sensíveis.",
+                "ru": f"Это тестовая переписка. Сообщения передаются внешнему сервису обработки и хранятся локально до {self.retention_days} дней с последней активности. /stop останавливает переписку; /forget удаляет сообщения и память. Резервные копии удаляются по тому же сроку. Минимальные записи удаления сохраняются. Не отправляйте чувствительные персональные данные.",
+                "en": f"This is a test chat. Messages are sent to an external processing service and stored locally for up to {self.retention_days} days after last activity. /stop pauses messages; /forget deletes conversation memory. Backups expire under the same retention policy. Minimal deletion records remain. Do not send sensitive personal data.",
+                "es": f"Chat de prueba. Los mensajes se envían a un servicio externo de procesamiento y se guardan localmente hasta {self.retention_days} días tras la última actividad. /stop pausa; /forget elimina mensajes y recuerdos. Las copias caducan con el mismo plazo. Los registros mínimos de eliminación se conservan. No envíes datos sensibles.",
+                "pt": f"Chat de teste. Mensagens são enviadas a um serviço externo de processamento e guardadas localmente até {self.retention_days} dias após a última atividade. /stop pausa; /forget apaga mensagens e memórias. Cópias expiram no mesmo prazo. Registros mínimos de exclusão são mantidos. Não envie dados sensíveis.",
             }
             text = texts.get(conversation.language, texts["en"])
             if self.settings.followup_enabled:

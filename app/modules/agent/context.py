@@ -16,6 +16,7 @@ from app.modules.agent.schemas import (
     ReplyProposal,
     TurnInterpretation,
 )
+from app.modules.agent.time import current_time_facts
 from app.modules.conversations.entities import Conversation, Message, Turn
 from app.modules.conversations.repository import ConversationRepository
 from app.modules.memory.entities import MemoryView
@@ -79,9 +80,7 @@ class ContextBuilder:
         protected_ids: set[str],
         token_count: Callable[[], int],
     ) -> None:
-        protected_ids = protected_ids | {
-            message.id for message in recent_messages(messages, 1)
-        }
+        recent_ids = {message.id for message in recent_messages(messages, 1)}
         remaining_tokens = token_count()
         if remaining_tokens <= self.settings.context_tokens:
             return
@@ -100,7 +99,11 @@ class ContextBuilder:
             omitted_ids.clear()
             return token_count()
 
-        for group in groups.values():
+        ordered_groups = sorted(
+            groups.values(),
+            key=lambda group: any(message.id in recent_ids for message in group),
+        )
+        for group in ordered_groups:
             identifiers = {message.id for message in group}
             if identifiers & protected_ids:
                 continue
@@ -359,6 +362,15 @@ class ContextBuilder:
         permissions = interpretation.requested_persona_fields
         data: dict[str, Any] = {
             "PERSONA_PROJECTION": persona_projection(permissions, self.clock.now()),
+            "CURRENT_TIME_FACTS": current_time_facts(
+                " ".join(
+                    message.text
+                    for message in turn.messages
+                    if not message.metadata.get("forwarded")
+                ),
+                self.clock.now(),
+            ),
+            "CHAT_CAPABILITIES": {"can_send_photos": False, "text_only": True},
             "APPLICATION_STATE": {
                 "control": conversation.control_state,
                 "purchase": conversation.purchase_state,

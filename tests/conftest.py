@@ -20,6 +20,7 @@ async def app(tmp_path: Path) -> AsyncIterator[Application]:
                 "coalesce_seconds": 0,
                 "reply_pause_min_seconds": 2,
                 "reply_pause_max_seconds": 4,
+                "reply_pacing_enabled": False,
             },
             "memory": {
                 "history_threshold_tokens": 700,

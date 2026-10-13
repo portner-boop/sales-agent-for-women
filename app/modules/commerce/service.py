@@ -6,6 +6,8 @@ from app.shared.config import CommerceSettings
 from app.shared.entities import Clock, ScopeContext
 from app.shared.storage import Transaction
 
+PLATFORM_URL = "https://www.behappy2day.com/"
+
 
 class CommerceService:
     def __init__(
@@ -54,23 +56,36 @@ class CommerceService:
             >= self.settings.preview_max_replies - 1,
         }
 
-    def transition_text(self, language: str) -> str:
+    def transition_text(self, language: str, answer: str | None = None) -> str:
         texts = {
-            "ru": "Мне понравилось с тобой болтать, но тут уже пора заканчивать\nЕсли хочешь продолжить, на BeHappy2Day можно купить время для переписки",
-            "en": "I liked chatting with you, but I need to wrap up here\nIf you want to keep chatting, you can buy chat time on BeHappy2Day",
-            "es": "Me gustó charlar contigo, pero tengo que terminar aquí\nSi quieres seguir charlando, puedes comprar tiempo de chat en BeHappy2Day",
-            "pt": "Gostei de conversar com você, mas preciso encerrar por aqui\nSe quiser continuar conversando, pode comprar tempo de conversa no BeHappy2Day",
+            "ru": "Если захочешь продолжить общение, на BeHappy2Day можно купить время для переписки",
+            "en": "If you’d like to keep chatting, you can buy chat time on BeHappy2Day",
+            "es": "Si te apetece seguir charlando, puedes comprar tiempo de chat en BeHappy2Day",
+            "pt": "Se quiser continuar conversando, pode comprar tempo de conversa no BeHappy2Day",
         }
-        return texts.get(language.split("-")[0], texts["en"])
+        invitation = (
+            texts.get(language.split("-")[0], texts["en"]) + "\n" + PLATFORM_URL
+        )
+        return f"{answer.strip()}\n\n{invitation}" if answer else invitation
 
-    def farewell_text(self, language: str) -> str:
+    def platform_info_text(self, language: str) -> str:
+        texts = {
+            "ru": "Продолжить переписку можно на BeHappy2Day",
+            "en": "You can continue chatting on BeHappy2Day",
+            "es": "Puedes continuar charlando en BeHappy2Day",
+            "pt": "Você pode continuar conversando no BeHappy2Day",
+        }
+        return texts.get(language.split("-")[0], texts["en"]) + "\n" + PLATFORM_URL
+
+    def farewell_text(self, language: str, answer: str | None = None) -> str:
         texts = {
             "ru": "Понял, тогда закончим здесь",
             "en": "Understood, let’s leave it here",
             "es": "Entendido, lo dejamos aquí",
             "pt": "Entendido, vamos encerrar por aqui",
         }
-        return texts.get(language.split("-")[0], texts["en"])
+        closing = texts.get(language.split("-")[0], texts["en"])
+        return f"{answer.strip()}\n\n{closing}" if answer else closing
 
     def closed_text(self, language: str) -> str:
         texts = {
@@ -79,7 +94,7 @@ class CommerceService:
             "es": "Este chat terminó aquí\nPuedes continuar en BeHappy2Day",
             "pt": "Esta conversa terminou aqui\nVocê pode continuar no BeHappy2Day",
         }
-        return texts.get(language.split("-")[0], texts["en"])
+        return texts.get(language.split("-")[0], texts["en"]) + "\n" + PLATFORM_URL
 
     async def confirm(
         self,

@@ -315,7 +315,8 @@ async def test_repair_request_is_fitted_with_its_actual_payload(
         {
             "decision": "reject",
             "reason_codes": ["POLISHED_SMALL_TALK"],
-            "violating_text": "I have a thoughtful opinion about this topic.",
+            "violating_text": "I have a thoughtful opinion about this topic. " * 21,
+            "explanation": "The reply repeats an unrelated supportive opinion. " * 9,
         }
     )
     app.model.responses["repair"].append(

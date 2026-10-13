@@ -191,6 +191,62 @@ async def test_large_recent_turns_are_bounded_for_the_interpreter(
     )
 
 
+async def test_previous_large_turn_is_optional_but_explicit_reference_is_protected(
+    app: Application,
+) -> None:
+    original_text = "flower " * 1800
+    await app.telegram.ingest([update(1, original_text)])
+    await app.turn_worker.run_once()
+    await app.delivery.run_once()
+    current = await conversation(app)
+    original = next(
+        message
+        for message in await app.conversations.messages(current.scope)
+        if message.role == "user"
+    )
+    current_text = "A new topic about music. " * 100
+    await app.telegram.ingest([update(2, current_text)])
+    current = await conversation(app)
+    turn = await app.conversations.claim_turn(current.scope, app.clock.now())
+    assert turn is not None
+    interpretation = TurnInterpretation(
+        intent="chat", dialogue_mode="continuation", language="en"
+    )
+    view = await app.memory.retrieve(current.scope, [], [], [], False, [])
+    baseline = await app.agent.builder.build(turn, interpretation, current, view)
+    assert any(item["id"] == original.id for item in baseline.data["RECENT_MESSAGES"])
+    reserve = (
+        max(
+            0,
+            app.settings.memory.context_tokens
+            - sum(baseline.manifest.token_count_by_section.values()),
+        )
+        + 500
+    )
+    bounded = await app.agent.builder.build(
+        turn, interpretation, current, view, request_reserve_tokens=reserve
+    )
+    assert not any(
+        item["id"] == original.id for item in bounded.data["RECENT_MESSAGES"]
+    )
+    assert bounded.data["CURRENT_INPUT"][0]["text"] == current_text
+    assert bounded.data["HISTORY_STATUS"]["omitted_uncompressed_messages"] >= 2
+    assert sum(bounded.manifest.token_count_by_section.values()) <= 12000
+    stored = await app.conversations.messages(current.scope)
+    assert (
+        next(message.text for message in stored if message.id == original.id)
+        == original_text
+    )
+    referenced = interpretation.model_copy(
+        update={"referenced_message_ids": [original.id]}
+    )
+    sources = await app.memory.retrieve(current.scope, [], [], [], False, [original.id])
+    with pytest.raises(ContextOverflowError):
+        await app.agent.builder.build(
+            turn, referenced, current, sources, request_reserve_tokens=reserve
+        )
+
+
 async def test_two_parts_keep_delivery_time_after_slow_generation(
     app: Application, monkeypatch: pytest.MonkeyPatch
 ) -> None:

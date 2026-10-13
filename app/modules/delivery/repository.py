@@ -8,6 +8,7 @@ from app.modules.conversations.schemas import QuestionGoal
 from app.modules.delivery.entities import OutboxMessage
 from app.modules.delivery.schemas import OutboxDraft
 from app.shared.entities import RevisionSnapshot, ScopeContext, StaleStateError
+from app.shared.identity import contains_identity_disclosure, identity_reply
 from app.shared.storage import (
     Database,
     Transaction,
@@ -50,11 +51,9 @@ class DeliveryRepository:
                 or predecessor["deadline"] != draft.deadline
             ):
                 raise StaleStateError("Continuation requires its scoped reply")
-        elif draft.delay_seconds:
-            raise ValueError("Only a continuation can have a pause")
         identifier = uuid4().hex
         await tx.execute(
-            "INSERT OR IGNORE INTO outbox_messages(id,action_key,scope_id,epoch,input_revision,control_revision,memory_revision,turn_id,kind,text,proposal_json,deadline,created_at,predecessor_id,delay_seconds) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
+            "INSERT OR IGNORE INTO outbox_messages(id,action_key,scope_id,epoch,input_revision,control_revision,memory_revision,turn_id,kind,text,proposal_json,deadline,created_at,predecessor_id,message_delay_seconds) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
             (
                 identifier,
                 draft.action_key,
@@ -68,7 +67,7 @@ class DeliveryRepository:
                 draft.text,
                 json.dumps(proposal or {}, ensure_ascii=False),
                 draft.deadline,
-                now,
+                now + draft.delay_seconds if draft.predecessor_id is None else now,
                 draft.predecessor_id,
                 draft.delay_seconds,
             ),
@@ -98,7 +97,7 @@ class DeliveryRepository:
     ) -> OutboxMessage | None:
         row = await fetchone(
             tx,
-            "SELECT o.*,c.chat_id,c.control_state,c.purchase_state,c.epoch AS current_epoch,c.input_revision AS current_input,c.control_revision AS current_control,c.memory_revision AS current_memory FROM outbox_messages o JOIN conversations c ON c.id=o.scope_id WHERE o.id=? AND o.status='ready'",
+            "SELECT o.*,c.chat_id,c.language,c.control_state,c.purchase_state,c.epoch AS current_epoch,c.input_revision AS current_input,c.control_revision AS current_control,c.memory_revision AS current_memory FROM outbox_messages o JOIN conversations c ON c.id=o.scope_id WHERE o.id=? AND o.status='ready'",
             (identifier,),
         )
         if row is None:
@@ -164,6 +163,57 @@ class DeliveryRepository:
             return None
         if now < row["created_at"]:
             return None
+        text = row["text"]
+        related = await fetchone(
+            tx,
+            "SELECT text FROM outbox_messages WHERE (id=? OR predecessor_id=?) AND scope_id=? AND epoch=? AND status IN ('ready','delivered') LIMIT 1",
+            (row["predecessor_id"], identifier, row["scope_id"], row["epoch"]),
+        )
+        combined = text
+        if related is not None:
+            combined = (
+                related["text"] + "\n" + text
+                if row["predecessor_id"] is not None
+                else text + "\n" + related["text"]
+            )
+        if contains_identity_disclosure(combined):
+            if proposal.get("origin") == "followup":
+                await tx.execute(
+                    "UPDATE outbox_messages SET status='cancelled',error_code='IDENTITY_GUARD' WHERE id=?",
+                    (identifier,),
+                )
+                await self.cancel_successor(tx, identifier)
+                return None
+            recent = await fetchall(
+                tx,
+                "SELECT v.text FROM messages m JOIN message_versions v ON v.message_id=m.id AND v.version=m.current_version WHERE m.scope_id=? AND m.epoch=? AND m.role!='user' ORDER BY m.sequence DESC LIMIT 12",
+                (row["scope_id"], row["epoch"]),
+            )
+            text = identity_reply(
+                row["language"], [item["text"] for item in reversed(recent)]
+            )
+            proposal = {
+                **proposal,
+                "reply": text,
+                "continuation": None,
+                "dialogue_act": "identity_boundary",
+                "question_goal": None,
+                "question_part": None,
+                "requested_action": "none",
+                "followup_allowed": False,
+                "new_commitment_candidate": None,
+                "used_memory_ids": [],
+                "used_source_message_ids": [],
+                "identity_guard": True,
+            }
+            await tx.execute(
+                "UPDATE outbox_messages SET text=?,proposal_json=? WHERE id=?",
+                (text, json.dumps(proposal, ensure_ascii=False), identifier),
+            )
+            await tx.execute(
+                "UPDATE outbox_messages SET status='cancelled',error_code='IDENTITY_GUARD' WHERE predecessor_id=? AND status='ready'",
+                (identifier,),
+            )
         await tx.execute(
             "UPDATE outbox_messages SET status='sending',attempts=attempts+1 WHERE id=?",
             (identifier,),
@@ -174,7 +224,7 @@ class DeliveryRepository:
             row["chat_id"],
             row["turn_id"],
             row["kind"],
-            row["text"],
+            text,
             proposal,
             row["attempts"] + 1,
             row["deadline"],
@@ -226,8 +276,8 @@ class DeliveryRepository:
         )
         if stored_status == "delivered":
             await tx.execute(
-                "UPDATE outbox_messages SET created_at=?+delay_seconds WHERE predecessor_id=? AND status='ready'",
-                (now, message.id),
+                "UPDATE outbox_messages SET created_at=?+COALESCE(message_delay_seconds,delay_seconds),deadline=CASE WHEN message_delay_seconds IS NOT NULL THEN MAX(deadline,?+message_delay_seconds+30) ELSE deadline END WHERE predecessor_id=? AND status='ready'",
+                (now, now, message.id),
             )
         elif stored_status in {"permanent_failure", "delivery_unknown"}:
             await self.cancel_successor(tx, message.id)
@@ -282,7 +332,7 @@ class DeliveryRepository:
         async with self.database.read() as tx:
             rows = await fetchall(
                 tx,
-                "SELECT o.id,o.scope_id,c.chat_id FROM outbox_messages o JOIN outbox_messages p ON p.id=o.predecessor_id JOIN conversations c ON c.id=o.scope_id WHERE o.status='ready' AND p.status='delivered' AND o.created_at>? AND o.deadline>? AND o.epoch=c.epoch AND o.input_revision=c.input_revision AND o.control_revision=c.control_revision AND o.memory_revision=c.memory_revision AND c.control_state='enabled' AND c.purchase_state!='confirmed' AND NOT EXISTS(SELECT 1 FROM runtime_controls WHERE kill_switch=1)",
+                "SELECT o.id,o.scope_id,c.chat_id FROM outbox_messages o LEFT JOIN outbox_messages p ON p.id=o.predecessor_id JOIN conversations c ON c.id=o.scope_id WHERE o.status='ready' AND (o.predecessor_id IS NULL OR p.status='delivered') AND (o.kind IN ('reply','offer') OR o.turn_id IS NOT NULL) AND o.created_at>? AND o.deadline>? AND o.epoch=c.epoch AND o.input_revision=c.input_revision AND o.control_revision=c.control_revision AND o.memory_revision=c.memory_revision AND c.control_state='enabled' AND c.purchase_state!='confirmed' AND NOT EXISTS(SELECT 1 FROM runtime_controls WHERE kill_switch=1)",
                 (now, now),
             )
             return [(row["id"], row["scope_id"], row["chat_id"]) for row in rows]
