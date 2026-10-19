@@ -22,7 +22,7 @@ class FollowupRepository:
         await require_scope(tx, scope)
         row = await fetchone(
             tx,
-            "SELECT o.input_revision,o.control_revision,c.processed_sequence FROM outbox_messages o JOIN conversations c ON c.id=o.scope_id WHERE o.id=? AND o.scope_id=? AND o.epoch=? AND o.status='delivered' AND o.input_revision=c.input_revision AND o.control_revision=c.control_revision AND c.control_state='enabled' AND c.dialogue_mode NOT IN ('closing','service') AND c.purchase_state!='confirmed' AND NOT EXISTS(SELECT 1 FROM runtime_controls WHERE kill_switch=1) AND NOT EXISTS(SELECT 1 FROM messages WHERE scope_id=c.id AND epoch=c.epoch AND pending=1) AND NOT EXISTS(SELECT 1 FROM memory_items WHERE scope_id=c.id AND epoch=c.epoch AND validity_status='current' AND kind='boundary' AND predicate IN ('proactive_permission','followup_permission','contact_permission') AND value_json='false')",
+            "SELECT o.input_revision,o.control_revision,c.processed_sequence FROM outbox_messages o JOIN conversations c ON c.id=o.scope_id WHERE o.id=? AND o.scope_id=? AND o.epoch=? AND o.status='delivered' AND o.input_revision=c.input_revision AND o.control_revision=c.control_revision AND c.control_state='enabled' AND c.dialogue_mode!='closing' AND c.purchase_state!='confirmed' AND NOT EXISTS(SELECT 1 FROM runtime_controls WHERE kill_switch=1) AND NOT EXISTS(SELECT 1 FROM messages WHERE scope_id=c.id AND epoch=c.epoch AND pending=1) AND NOT EXISTS(SELECT 1 FROM memory_items WHERE scope_id=c.id AND epoch=c.epoch AND validity_status='current' AND kind='boundary' AND predicate IN ('proactive_permission','followup_permission','contact_permission') AND value_json='false')",
             (anchor_id, scope.scope_id, scope.epoch),
         )
         if row is None:
@@ -125,6 +125,17 @@ class FollowupRepository:
         if row is None or row["status"] != "generating":
             raise StaleStateError("Follow-up was cancelled before preparation")
         await self.finish(tx, ticket.id, "prepared")
+
+    async def retry(self, tx: Transaction, ticket: FollowupTicket, reason: str) -> None:
+        cursor = await tx.execute(
+            "UPDATE followups SET status='pending',reason=? WHERE id=? AND status='generating'",
+            (reason, ticket.id),
+        )
+        if cursor.rowcount:
+            await tx.execute(
+                "UPDATE turns SET status='scheduled' WHERE id=? AND status='processing'",
+                (ticket.turn.id,),
+            )
 
     async def finish(
         self, tx: Transaction, identifier: str, status: str, reason: str | None = None

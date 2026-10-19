@@ -1,6 +1,8 @@
 import re
 import unicodedata
 
+from app.modules.agent.resources import response_text
+
 PHOTO_WORD = r"(?:фото(?:графи[яиюйи])?|фотк[аиуио]|фоточк[аиуио]|сним(?:ок|ки|ку)|photos?|pictures?|pics?|fotos?|fotograf[ií]as?|imagens?)"
 PHOTO_REQUEST = re.compile(
     rf"(?:^|[.!?]\s*|\bу тебя\s+)(?:а\s+)?(?:есть|имеются)\b[^.!?]*\b{PHOTO_WORD}\b|"
@@ -18,12 +20,6 @@ PHOTO_QUERY_WORD = re.compile(
     r"olá|ola|você|voce|tem|tens|pode|enviar|mandar|mostra|suas|uma|um|te|ver",
     re.I,
 )
-PHOTO_REFUSALS = {
-    "ru": "Фото здесь не отправляю, но поболтать буду рад",
-    "en": "I don’t send photos here, but I’m happy to chat",
-    "es": "No envío fotos aquí, pero me encantará charlar contigo",
-    "pt": "Não envio fotos aqui, mas fico feliz em conversar",
-}
 
 
 def normalized_photo_input(text: str) -> str:
@@ -54,7 +50,7 @@ def is_standalone_photo_request(text: str) -> bool:
 
 
 def photo_refusal(language: str) -> str:
-    return PHOTO_REFUSALS.get(language.split("-")[0], PHOTO_REFUSALS["en"])
+    return response_text("photo_refusal", language)
 
 
 def photo_language(text: str, prior_language: str) -> str:
@@ -68,15 +64,3 @@ def photo_language(text: str, prior_language: str) -> str:
     if re.search(r"\b(?:photos?|pictures?|pics?)\b", normalized):
         return "en"
     return prior_language
-
-
-def is_contact_request(text: str) -> bool:
-    return bool(
-        re.search(
-            r"\b(?:can you|could you|can i|could i|give me|share|let['’]s talk|let['’]s chat|"
-            r"дай|дашь|поделись|пришли|можно|можешь|давай)\b[^.!?]{0,100}"
-            r"\b(?:whatsapp|phone|number|contact|ватсап\w*|вотсап\w*|телефон\w*|номер\w*|контакт\w*)\b",
-            text,
-            re.I,
-        )
-    )

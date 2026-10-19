@@ -1,0 +1,39 @@
+{
+  "photo_refusal": {
+    "ru": "Фото здесь не отправляю, но поболтать буду рад",
+    "en": "I don’t send photos here, but I’m happy to chat",
+    "es": "No envío fotos aquí, pero me encantará charlar contigo",
+    "pt": "Não envio fotos aqui, mas fico feliz em conversar"
+  },
+  "activity_recovery": {
+    "ru": "Сейчас читаю твои сообщения и отвечаю тебе",
+    "en": "Right now I’m reading your messages and replying to you",
+    "es": "Ahora estoy leyendo tus mensajes y respondiéndote",
+    "pt": "Agora estou lendo suas mensagens e respondendo a você"
+  },
+  "approximate_time": {
+    "ru": "В {city} сейчас примерно {clock}",
+    "en": "It's about {clock} in {city}"
+  },
+  "greeting": {
+    "ru": "Привет",
+    "en": "Hi",
+    "es": "Hola",
+    "pt": "Olá"
+  },
+  "day_question": {
+    "ru": "Как проходит день?",
+    "en": "How is your day going?"
+  },
+  "platform_invitation": {
+    "ru": "Если захочешь продолжить общение, на BeHappy2Day можно купить время для переписки",
+    "en": "If you’d like to keep chatting, you can buy chat time on BeHappy2Day",
+    "es": "Si te apetece seguir charlando, puedes comprar tiempo de chat en BeHappy2Day",
+    "pt": "Se quiser continuar conversando, pode comprar tempo de conversa no BeHappy2Day",
+    "fr": "Si tu veux continuer à discuter, tu peux acheter du temps de discussion sur BeHappy2Day",
+    "ar": "إذا أردت متابعة الحديث، يمكنك شراء وقت للدردشة على BeHappy2Day",
+    "de": "Wenn du weiterchatten möchtest, kannst du auf BeHappy2Day Chatzeit kaufen",
+    "it": "Se ti va di continuare a parlare, puoi acquistare tempo di chat su BeHappy2Day",
+    "ja": "続けたければ、BeHappy2Dayでチャット時間を購入できるよ"
+  }
+}

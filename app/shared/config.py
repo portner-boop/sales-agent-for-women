@@ -41,7 +41,7 @@ class RuntimeSettings(ConfigModel):
     llm_concurrency: int = Field(default=5, ge=1)
     llm_max_calls: int = Field(default=8, ge=6, le=8)
     llm_attempt_seconds: float = Field(default=12, gt=0)
-    turn_deadline_seconds: float = Field(default=15, gt=0)
+    turn_deadline_seconds: float = Field(default=45, gt=0)
     first_deadline_seconds: float = Field(default=10, gt=0)
     coalesce_seconds: float = Field(default=0.5, ge=0)
     max_coalesce_seconds: float = Field(default=2, gt=0)
@@ -57,7 +57,7 @@ class RuntimeSettings(ConfigModel):
     reply_delay_max_seconds: float = Field(default=60, gt=0, allow_inf_nan=False)
     first_reply_max_seconds: float = Field(default=10, gt=0, allow_inf_nan=False)
     followup_enabled: bool = False
-    followup_min_seconds: float = Field(default=30, ge=1)
+    followup_min_seconds: float = Field(default=60, ge=1)
     followup_max_seconds: float = Field(default=60, ge=1)
     followup_ttl_seconds: float = Field(default=90, ge=10)
 
@@ -73,7 +73,7 @@ class RuntimeSettings(ConfigModel):
 
 
 class MemorySettings(ConfigModel):
-    context_tokens: int = Field(default=12000, ge=2000)
+    context_tokens: int = Field(default=64000, ge=2000)
     recent_turns: int = Field(default=6, ge=1)
     history_threshold_tokens: int = Field(default=6000, ge=1)
     block_tokens: int = Field(default=2500, ge=100)
@@ -84,7 +84,7 @@ class MemorySettings(ConfigModel):
 class CommerceSettings(ConfigModel):
     package_minutes: int = Field(default=20, ge=1)
     preview_enabled: bool = False
-    preview_min_replies: int = Field(default=12, ge=1)
+    preview_min_replies: int = Field(default=15, ge=1)
     preview_max_replies: int = Field(default=20, ge=2)
 
     @model_validator(mode="after")

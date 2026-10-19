@@ -1,0 +1,621 @@
+{
+  "source_sha256": "a86fe617a6bcf4d26c466c3c48432e334f901cb3633f53905f488a503269e140",
+  "source": "Extended synthetic confirmation after complete-word evidence and family projection fixes",
+  "cases": [
+    {
+      "id": "quality_en",
+      "language": "en",
+      "silence_after": [
+        2,
+        28
+      ],
+      "requirements": "Remember Olga/Tallinn/history/two children/Max aged six; do not transfer her family or pet to Marko. Explicitly welcomed declarative follow-up after step 2 without questions; no follow-up after goodbye. Keep the Egypt joke playful. Natural moderate voice, warm contact boundary, correct rounded/exact time and morning versus future evening. Observe scheduled imperfections only where safe. Respect the current catalog identity experiment. Extra casual turns exercise two scheduled punctuation relaxations; validate their actual text, not a label.",
+      "steps": [
+        {
+          "text": "Hi, I'm Olga from Tallinn. I teach history, I have two children and a six-year-old golden retriever named Max.",
+          "received_at": 1792054800
+        },
+        {
+          "text": "I like small cafes. For now share your own thoughts without questions; if I go quiet, feel free to add something about cafes.",
+          "received_at": 1792054802
+        },
+        {
+          "text": "Pineapple on pizza is underrated, I think.",
+          "received_at": 1792054804
+        },
+        {
+          "text": "A rainy day and a good book sounds perfect to me.",
+          "received_at": 1792054806
+        },
+        {
+          "text": "I prefer rock music to jazz.",
+          "received_at": 1792054808
+        },
+        {
+          "text": "My dancing could probably scare the furniture.",
+          "received_at": 1792054810
+        },
+        {
+          "text": "I built the pyramids in Egypt in a past life. The aliens only carried my lunch, haha.",
+          "received_at": 1792054812
+        },
+        {
+          "text": "Mr Bean could make a boring wedding fun.",
+          "received_at": 1792054814
+        },
+        {
+          "text": "Strawberry ice cream is better than chocolate for me.",
+          "received_at": 1792054816
+        },
+        {
+          "text": "For an imaginary trip, I'd choose the mountains.",
+          "received_at": 1792054818
+        },
+        {
+          "text": "A fancy restaurant isn't always better than a small cafe.",
+          "received_at": 1792054820
+        },
+        {
+          "text": "Pasta with just a few ingredients can be the best dinner.",
+          "received_at": 1792054822
+        },
+        {
+          "text": "I prefer a savoury breakfast to a sweet one.",
+          "received_at": 1792054824
+        },
+        {
+          "text": "Old comedies often make me laugh more than new ones.",
+          "received_at": 1792054826
+        },
+        {
+          "text": "A trip with no packed schedule sounds better to me.",
+          "received_at": 1792054828
+        },
+        {
+          "text": "I like walking by the sea even when it's cloudy.",
+          "received_at": 1792054830
+        },
+        {
+          "text": "For a movie night, I'd choose something light.",
+          "received_at": 1792054832
+        },
+        {
+          "text": "Board games with friends can be surprisingly competitive.",
+          "received_at": 1792054834
+        },
+        {
+          "text": "I think a home should feel comfortable before it looks impressive.",
+          "received_at": 1792054836
+        },
+        {
+          "text": "A little music and good food can rescue a dull weekend.",
+          "received_at": 1792054838
+        },
+        {
+          "text": "What do you remember about me?",
+          "received_at": 1792054840
+        },
+        {
+          "text": "My dog is Max. Do you have any pets or children yourself?",
+          "received_at": 1792054842
+        },
+        {
+          "text": "Can you give me your WhatsApp number?",
+          "received_at": 1792054844
+        },
+        {
+          "text": "It's eleven in the morning here. What would you like to do this evening?",
+          "received_at": 1792054846
+        },
+        {
+          "text": "What time is it in Split?",
+          "received_at": 1792054848
+        },
+        {
+          "text": "And what is the exact time in Split, to the minute?",
+          "received_at": 1792054850
+        },
+        {
+          "text": "I had a difficult day at work. Say something kind, please.",
+          "received_at": 1792054852
+        },
+        {
+          "text": "I'm going to sleep now. Please don't send more messages. Goodnight.",
+          "received_at": 1792054854
+        }
+      ]
+    },
+    {
+      "id": "quality_ru",
+      "language": "ru",
+      "silence_after": [
+        2,
+        28
+      ],
+      "requirements": "Remember Olga/Tallinn/history/two children/Max aged six; do not transfer her family or pet to Marko. Explicitly welcomed declarative follow-up after step 2 without questions; no follow-up after goodbye. Keep the Egypt joke playful. Natural moderate voice, warm contact boundary, correct rounded/exact time and morning versus future evening. Observe scheduled imperfections only where safe. Respect the current catalog identity experiment. Extra casual turns exercise two scheduled punctuation relaxations; validate their actual text, not a label.",
+      "steps": [
+        {
+          "text": "Привет, я Ольга из Таллина. Преподаю историю, у меня двое детей и золотистый ретривер Макс, ему шесть лет.",
+          "received_at": 1792054800
+        },
+        {
+          "text": "Мне нравятся маленькие кафе. Пока делись своими мыслями без вопросов; если я замолчу, можешь сам добавить что-нибудь про кафе.",
+          "received_at": 1792054802
+        },
+        {
+          "text": "Ананас в пицце, по-моему, недооценивают.",
+          "received_at": 1792054804
+        },
+        {
+          "text": "Дождливый день и хорошая книга звучат идеально.",
+          "received_at": 1792054806
+        },
+        {
+          "text": "Я предпочитаю рок джазу.",
+          "received_at": 1792054808
+        },
+        {
+          "text": "Мои танцы могут напугать мебель.",
+          "received_at": 1792054810
+        },
+        {
+          "text": "В прошлой жизни я построила пирамиды в Египте. Инопланетяне только носили мне обед, ха-ха.",
+          "received_at": 1792054812
+        },
+        {
+          "text": "Мистер Бин мог бы оживить скучную свадьбу.",
+          "received_at": 1792054814
+        },
+        {
+          "text": "Мне клубничное мороженое нравится больше шоколадного.",
+          "received_at": 1792054816
+        },
+        {
+          "text": "Для воображаемой поездки я бы выбрала горы.",
+          "received_at": 1792054818
+        },
+        {
+          "text": "Дорогой ресторан не всегда лучше маленького кафе.",
+          "received_at": 1792054820
+        },
+        {
+          "text": "Паста из пары ингредиентов бывает лучшим ужином.",
+          "received_at": 1792054822
+        },
+        {
+          "text": "Я предпочитаю несладкий завтрак сладкому.",
+          "received_at": 1792054824
+        },
+        {
+          "text": "Старые комедии часто смешат меня больше новых.",
+          "received_at": 1792054826
+        },
+        {
+          "text": "Поездка без плотного расписания кажется мне приятнее.",
+          "received_at": 1792054828
+        },
+        {
+          "text": "Мне нравится гулять у моря даже в пасмурную погоду.",
+          "received_at": 1792054830
+        },
+        {
+          "text": "Для киновечера я бы выбрала что-нибудь лёгкое.",
+          "received_at": 1792054832
+        },
+        {
+          "text": "Настольные игры с друзьями иногда становятся настоящим соревнованием.",
+          "received_at": 1792054834
+        },
+        {
+          "text": "По-моему, дом прежде всего должен быть удобным, а потом уже впечатлять.",
+          "received_at": 1792054836
+        },
+        {
+          "text": "Немного музыки и вкусная еда могут спасти скучные выходные.",
+          "received_at": 1792054838
+        },
+        {
+          "text": "Что ты помнишь обо мне?",
+          "received_at": 1792054840
+        },
+        {
+          "text": "Моего пса зовут Макс. А у тебя самого есть питомцы или дети?",
+          "received_at": 1792054842
+        },
+        {
+          "text": "Дашь свой номер WhatsApp?",
+          "received_at": 1792054844
+        },
+        {
+          "text": "У меня сейчас одиннадцать утра. Чем бы ты хотел заняться сегодня вечером?",
+          "received_at": 1792054846
+        },
+        {
+          "text": "Который сейчас час в Сплите?",
+          "received_at": 1792054848
+        },
+        {
+          "text": "А точное время в Сплите, до минуты?",
+          "received_at": 1792054850
+        },
+        {
+          "text": "На работе был тяжёлый день. Скажи что-нибудь тёплое, пожалуйста.",
+          "received_at": 1792054852
+        },
+        {
+          "text": "Я пойду спать. Больше мне не пиши, пожалуйста. Спокойной ночи.",
+          "received_at": 1792054854
+        }
+      ]
+    },
+    {
+      "id": "quality_es",
+      "language": "es",
+      "silence_after": [
+        2,
+        28
+      ],
+      "requirements": "Remember Olga/Tallinn/history/two children/Max aged six; do not transfer her family or pet to Marko. Explicitly welcomed declarative follow-up after step 2 without questions; no follow-up after goodbye. Keep the Egypt joke playful. Natural moderate voice, warm contact boundary, correct rounded/exact time and morning versus future evening. Observe scheduled imperfections only where safe. Respect the current catalog identity experiment. Extra casual turns exercise two scheduled punctuation relaxations; validate their actual text, not a label.",
+      "steps": [
+        {
+          "text": "Hola, soy Olga de Tallin. Enseño historia, tengo dos hijos y un golden retriever de seis años llamado Max.",
+          "received_at": 1792054800
+        },
+        {
+          "text": "Me gustan los cafés pequeños. Por ahora comparte tus ideas sin preguntas; si me quedo callada, puedes añadir algo sobre los cafés.",
+          "received_at": 1792054802
+        },
+        {
+          "text": "Creo que la piña en la pizza está infravalorada.",
+          "received_at": 1792054804
+        },
+        {
+          "text": "Un día lluvioso y un buen libro me parecen perfectos.",
+          "received_at": 1792054806
+        },
+        {
+          "text": "Prefiero el rock al jazz.",
+          "received_at": 1792054808
+        },
+        {
+          "text": "Mi baile podría asustar a los muebles.",
+          "received_at": 1792054810
+        },
+        {
+          "text": "Construí las pirámides de Egipto en otra vida. Los extraterrestres solo me llevaban el almuerzo, jaja.",
+          "received_at": 1792054812
+        },
+        {
+          "text": "Mr Bean podría animar una boda aburrida.",
+          "received_at": 1792054814
+        },
+        {
+          "text": "Me gusta más el helado de fresa que el de chocolate.",
+          "received_at": 1792054816
+        },
+        {
+          "text": "Para un viaje imaginario, elegiría las montañas.",
+          "received_at": 1792054818
+        },
+        {
+          "text": "Un restaurante elegante no siempre es mejor que un café pequeño.",
+          "received_at": 1792054820
+        },
+        {
+          "text": "Una pasta con pocos ingredientes puede ser la mejor cena.",
+          "received_at": 1792054822
+        },
+        {
+          "text": "Prefiero un desayuno salado a uno dulce.",
+          "received_at": 1792054824
+        },
+        {
+          "text": "Las comedias antiguas a menudo me hacen reír más que las nuevas.",
+          "received_at": 1792054826
+        },
+        {
+          "text": "Me apetece más un viaje sin una agenda apretada.",
+          "received_at": 1792054828
+        },
+        {
+          "text": "Me gusta pasear junto al mar incluso cuando está nublado.",
+          "received_at": 1792054830
+        },
+        {
+          "text": "Para una noche de cine elegiría algo ligero.",
+          "received_at": 1792054832
+        },
+        {
+          "text": "Los juegos de mesa con amigos pueden ponerse muy competitivos.",
+          "received_at": 1792054834
+        },
+        {
+          "text": "Creo que una casa debe ser cómoda antes que impresionante.",
+          "received_at": 1792054836
+        },
+        {
+          "text": "Un poco de música y buena comida pueden salvar un fin de semana aburrido.",
+          "received_at": 1792054838
+        },
+        {
+          "text": "¿Qué recuerdas de mí?",
+          "received_at": 1792054840
+        },
+        {
+          "text": "Mi perro es Max. ¿Tú tienes mascotas o hijos?",
+          "received_at": 1792054842
+        },
+        {
+          "text": "¿Me das tu número de WhatsApp?",
+          "received_at": 1792054844
+        },
+        {
+          "text": "Aquí son las once de la mañana. ¿Qué te gustaría hacer esta noche?",
+          "received_at": 1792054846
+        },
+        {
+          "text": "¿Qué hora es ahora en Split?",
+          "received_at": 1792054848
+        },
+        {
+          "text": "¿Y la hora exacta en Split, al minuto?",
+          "received_at": 1792054850
+        },
+        {
+          "text": "Tuve un día difícil en el trabajo. Dime algo cariñoso, por favor.",
+          "received_at": 1792054852
+        },
+        {
+          "text": "Me voy a dormir. No me envíes más mensajes, por favor. Buenas noches.",
+          "received_at": 1792054854
+        }
+      ]
+    },
+    {
+      "id": "quality_fr",
+      "language": "fr",
+      "silence_after": [
+        2,
+        28
+      ],
+      "requirements": "Remember Olga/Tallinn/history/two children/Max aged six; do not transfer her family or pet to Marko. Explicitly welcomed declarative follow-up after step 2 without questions; no follow-up after goodbye. Keep the Egypt joke playful. Natural moderate voice, warm contact boundary, correct rounded/exact time and morning versus future evening. Observe scheduled imperfections only where safe. Respect the current catalog identity experiment. Extra casual turns exercise two scheduled punctuation relaxations; validate their actual text, not a label.",
+      "steps": [
+        {
+          "text": "Salut, je suis Olga de Tallinn. J'enseigne l'histoire, j'ai deux enfants et un golden retriever de six ans qui s'appelle Max.",
+          "received_at": 1792054800
+        },
+        {
+          "text": "J'aime les petits cafés. Pour le moment partage tes idées sans questions ; si je me tais, tu peux ajouter quelque chose sur les cafés.",
+          "received_at": 1792054802
+        },
+        {
+          "text": "Je trouve que l'ananas sur la pizza est sous-estimé.",
+          "received_at": 1792054804
+        },
+        {
+          "text": "Un jour de pluie et un bon livre, c'est parfait pour moi.",
+          "received_at": 1792054806
+        },
+        {
+          "text": "Je préfère le rock au jazz.",
+          "received_at": 1792054808
+        },
+        {
+          "text": "Ma danse pourrait faire peur aux meubles.",
+          "received_at": 1792054810
+        },
+        {
+          "text": "J'ai construit les pyramides d'Égypte dans une autre vie. Les extraterrestres apportaient seulement mon déjeuner, haha.",
+          "received_at": 1792054812
+        },
+        {
+          "text": "Mr Bean pourrait réveiller un mariage ennuyeux.",
+          "received_at": 1792054814
+        },
+        {
+          "text": "Je préfère la glace à la fraise à celle au chocolat.",
+          "received_at": 1792054816
+        },
+        {
+          "text": "Pour un voyage imaginaire, je choisirais la montagne.",
+          "received_at": 1792054818
+        },
+        {
+          "text": "Un restaurant chic n'est pas toujours mieux qu'un petit café.",
+          "received_at": 1792054820
+        },
+        {
+          "text": "Des pâtes avec peu d'ingrédients peuvent faire le meilleur dîner.",
+          "received_at": 1792054822
+        },
+        {
+          "text": "Je préfère un petit déjeuner salé à un sucré.",
+          "received_at": 1792054824
+        },
+        {
+          "text": "Les anciennes comédies me font souvent plus rire que les nouvelles.",
+          "received_at": 1792054826
+        },
+        {
+          "text": "Un voyage sans programme chargé me semble plus agréable.",
+          "received_at": 1792054828
+        },
+        {
+          "text": "J'aime marcher au bord de la mer même quand il fait gris.",
+          "received_at": 1792054830
+        },
+        {
+          "text": "Pour une soirée cinéma, je choisirais quelque chose de léger.",
+          "received_at": 1792054832
+        },
+        {
+          "text": "Les jeux de société entre amis peuvent devenir très compétitifs.",
+          "received_at": 1792054834
+        },
+        {
+          "text": "Je trouve qu'une maison doit être confortable avant d'être impressionnante.",
+          "received_at": 1792054836
+        },
+        {
+          "text": "Un peu de musique et un bon repas peuvent sauver un week-end ennuyeux.",
+          "received_at": 1792054838
+        },
+        {
+          "text": "Qu'est-ce que tu te rappelles de moi ?",
+          "received_at": 1792054840
+        },
+        {
+          "text": "Mon chien s'appelle Max. Et toi, tu as des animaux ou des enfants ?",
+          "received_at": 1792054842
+        },
+        {
+          "text": "Tu me donnes ton numéro WhatsApp ?",
+          "received_at": 1792054844
+        },
+        {
+          "text": "Il est onze heures du matin chez moi. Qu'aimerais-tu faire ce soir ?",
+          "received_at": 1792054846
+        },
+        {
+          "text": "Quelle heure est-il à Split maintenant ?",
+          "received_at": 1792054848
+        },
+        {
+          "text": "Et l'heure exacte à Split, à la minute près ?",
+          "received_at": 1792054850
+        },
+        {
+          "text": "J'ai eu une journée difficile au travail. Dis-moi quelque chose de gentil, s'il te plaît.",
+          "received_at": 1792054852
+        },
+        {
+          "text": "Je vais dormir. Ne m'envoie plus de messages, s'il te plaît. Bonne nuit.",
+          "received_at": 1792054854
+        }
+      ]
+    },
+    {
+      "id": "quality_ar",
+      "language": "ar",
+      "silence_after": [
+        2,
+        28
+      ],
+      "requirements": "Remember Olga/Tallinn/history/two children/Max aged six; do not transfer her family or pet to Marko. Explicitly welcomed declarative follow-up after step 2 without questions; no follow-up after goodbye. Keep the Egypt joke playful. Natural moderate voice, warm contact boundary, correct rounded/exact time and morning versus future evening. Observe scheduled imperfections only where safe. Respect the current catalog identity experiment. Extra casual turns exercise two scheduled punctuation relaxations; validate their actual text, not a label.",
+      "steps": [
+        {
+          "text": "مرحبا، أنا أولغا من تالين. أدرّس التاريخ ولدي طفلان وكلب غولدن ريتريفر اسمه ماكس وعمره ست سنوات.",
+          "received_at": 1792054800
+        },
+        {
+          "text": "أحب المقاهي الصغيرة. شاركني أفكارك الآن من دون أسئلة، وإذا سكتّ يمكنك إضافة فكرة عن المقاهي من نفسك.",
+          "received_at": 1792054802
+        },
+        {
+          "text": "أعتقد أن الأناناس على البيتزا لا يأخذ حقه.",
+          "received_at": 1792054804
+        },
+        {
+          "text": "يوم ممطر وكتاب جميل يبدو مثاليا لي.",
+          "received_at": 1792054806
+        },
+        {
+          "text": "أفضل موسيقى الروك على الجاز.",
+          "received_at": 1792054808
+        },
+        {
+          "text": "رقصي قد يخيف الأثاث.",
+          "received_at": 1792054810
+        },
+        {
+          "text": "أنا بنيت أهرامات مصر في حياة سابقة. الفضائيون كانوا يحملون غدائي فقط، ههه.",
+          "received_at": 1792054812
+        },
+        {
+          "text": "مستر بين يستطيع جعل حفل زفاف ممل ممتعا.",
+          "received_at": 1792054814
+        },
+        {
+          "text": "أفضل آيس كريم الفراولة على الشوكولاتة.",
+          "received_at": 1792054816
+        },
+        {
+          "text": "لرحلة خيالية سأختار الجبال.",
+          "received_at": 1792054818
+        },
+        {
+          "text": "المطعم الفاخر ليس دائما أفضل من مقهى صغير.",
+          "received_at": 1792054820
+        },
+        {
+          "text": "المعكرونة بمكونات قليلة قد تكون أفضل عشاء.",
+          "received_at": 1792054822
+        },
+        {
+          "text": "أفضل الفطور المالح على الحلو.",
+          "received_at": 1792054824
+        },
+        {
+          "text": "الأفلام الكوميدية القديمة تضحكني أحيانا أكثر من الجديدة.",
+          "received_at": 1792054826
+        },
+        {
+          "text": "رحلة من دون جدول مزدحم تبدو أجمل لي.",
+          "received_at": 1792054828
+        },
+        {
+          "text": "أحب المشي بجانب البحر حتى عندما يكون الجو غائما.",
+          "received_at": 1792054830
+        },
+        {
+          "text": "لسهرة سينمائية سأختار شيئا خفيفا.",
+          "received_at": 1792054832
+        },
+        {
+          "text": "ألعاب الطاولة مع الأصدقاء قد تصبح تنافسية جدا.",
+          "received_at": 1792054834
+        },
+        {
+          "text": "أعتقد أن البيت يجب أن يكون مريحا قبل أن يكون مبهرا.",
+          "received_at": 1792054836
+        },
+        {
+          "text": "القليل من الموسيقى والطعام اللذيذ قد ينقذ عطلة مملة.",
+          "received_at": 1792054838
+        },
+        {
+          "text": "ماذا تتذكر عني؟",
+          "received_at": 1792054840
+        },
+        {
+          "text": "كلبي اسمه ماكس. هل لديك أنت حيوانات أليفة أو أطفال؟",
+          "received_at": 1792054842
+        },
+        {
+          "text": "هل تعطيني رقمك على واتساب؟",
+          "received_at": 1792054844
+        },
+        {
+          "text": "الساعة عندي الآن الحادية عشرة صباحا. ماذا تود أن تفعل هذا المساء؟",
+          "received_at": 1792054846
+        },
+        {
+          "text": "كم الساعة الآن في سبليت؟",
+          "received_at": 1792054848
+        },
+        {
+          "text": "وما الوقت الدقيق في سبليت بالدقيقة؟",
+          "received_at": 1792054850
+        },
+        {
+          "text": "كان يومي صعبا في العمل. قل لي شيئا لطيفا من فضلك.",
+          "received_at": 1792054852
+        },
+        {
+          "text": "سأذهب للنوم الآن. لا ترسل لي المزيد من الرسائل من فضلك. تصبح على خير.",
+          "received_at": 1792054854
+        }
+      ]
+    }
+  ]
+}

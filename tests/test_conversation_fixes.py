@@ -198,7 +198,7 @@ async def test_platform_invitation_has_one_link_as_last_line(
 ) -> None:
     for text in [
         app.commerce.transition_text(language),
-        app.commerce.closed_text(language),
+        app.commerce.platform_info_text(language),
     ]:
         assert text.splitlines()[-1] == PLATFORM_URL
         assert text.count(PLATFORM_URL) == 1

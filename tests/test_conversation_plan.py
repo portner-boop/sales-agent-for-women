@@ -1,7 +1,6 @@
 import json
 
 import pytest
-from pydantic import ValidationError
 
 from app.application import Application
 from app.evaluation import receive
@@ -60,7 +59,7 @@ async def test_reciprocal_answer_delivers_its_hook_without_next_input(
     await receive(app, app.sender, 1, text, 1, app.clock.now())
     assert [text for _, text in app.sender.sent] == [reply, continuation]
     data = next(data for task, data in app.model.calls if task == "generate")
-    assert data["DIALOGUE_PLAN"]["requires_continuation"] is True
+    assert data["DIALOGUE_PLAN"]["requires_continuation"] is False
     assert await scalar(app, "SELECT status FROM agent_runs") == "prepared"
     assert await scalar(app, "SELECT COUNT(*) FROM said_ledger") == 2
     assert await scalar(app, "SELECT COUNT(*) FROM dialogue_threads") == 1
@@ -71,7 +70,7 @@ async def test_reciprocal_answer_delivers_its_hook_without_next_input(
     ]
 
 
-async def test_required_continuation_is_part_of_the_llm_response_contract(
+async def test_complete_single_reply_is_valid_in_the_llm_response_contract(
     app: Application, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     original = app.model.complete
@@ -80,8 +79,10 @@ async def test_required_continuation_is_part_of_the_llm_response_contract(
     async def check_schema(task, rules, data, schema, deadline_seconds):
         nonlocal checked
         if task == "generate":
-            with pytest.raises(ValidationError):
-                schema.model_validate({"reply": "Хорошо.", "dialogue_act": "answer"})
+            candidate = schema.model_validate(
+                {"reply": "Хорошо.", "dialogue_act": "answer"}
+            )
+            assert candidate.continuation is None
             checked = True
         return await original(task, rules, data, schema, deadline_seconds)
 
@@ -195,6 +196,74 @@ async def test_forwarded_question_is_not_a_direct_reciprocal_request(
     await app.drain()
     data = next(data for task, data in app.model.calls if task == "generate")
     assert data["DIALOGUE_PLAN"]["requires_continuation"] is False
+
+
+async def test_open_social_turn_allows_a_contextual_question_without_forcing_it(
+    app: Application,
+) -> None:
+    app.model.responses["interpret"].append(
+        {
+            "intent": "chat",
+            "dialogue_mode": "continuation",
+            "language": "en",
+            "continue_conversation": False,
+        }
+    )
+    app.model.responses["generate"].append(
+        {
+            "reply": "That sounds like a lively place",
+            "continuation": "What do you enjoy most about your team?",
+            "dialogue_act": "reaction_and_question",
+            "question_goal": "team_enjoyment",
+            "question_part": "continuation",
+        }
+    )
+    await receive(app, app.sender, 1, "I work with a huge team", 1, app.clock.now())
+    context = next(data for task, data in app.model.calls if task == "generate")
+    assert context["DIALOGUE_PLAN"]["initiative_due"] is True
+    assert context["DIALOGUE_PLAN"]["requires_continuation"] is False
+    assert context["DIALOGUE_PLAN"]["strategy"] == "develop_conversation_naturally"
+    assert [text for _, text in app.sender.sent] == [
+        "That sounds like a lively place",
+        "What do you enjoy most about your team?",
+    ]
+    assert await scalar(app, "SELECT COUNT(*) FROM followups") == 0
+
+
+async def test_two_question_turns_pause_immediate_initiative(app: Application) -> None:
+    for index, (user_text, question, goal) in enumerate(
+        [
+            ("I work at a bank", "How big is your team?", "team_size"),
+            ("About twenty", "Do you enjoy the people there?", "team_enjoyment"),
+        ],
+        1,
+    ):
+        app.model.responses["generate"].append(
+            {
+                "reply": question,
+                "dialogue_act": "question",
+                "question_goal": goal,
+                "question_part": "reply",
+            }
+        )
+        await receive(app, app.sender, index, user_text, 1, app.clock.now())
+    app.model.responses["interpret"].append(
+        {
+            "intent": "chat",
+            "dialogue_mode": "continuation",
+            "language": "en",
+            "continue_conversation": False,
+        }
+    )
+    app.model.responses["generate"].append(
+        {"reply": "That makes sense", "dialogue_act": "reaction"}
+    )
+    await receive(app, app.sender, 3, "Most days yes", 1, app.clock.now())
+    context = [data for task, data in app.model.calls if task == "generate"][-1]
+    assert context["DIALOGUE_PLAN"]["consecutive_question_turns"] == 2
+    assert context["DIALOGUE_PLAN"]["questions_allowed"] is False
+    assert context["DIALOGUE_PLAN"]["initiative_due"] is False
+    assert app.sender.sent[-1] == (1, "That makes sense")
 
 
 @pytest.mark.parametrize(

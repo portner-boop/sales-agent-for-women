@@ -25,7 +25,7 @@ def test_split_time_uses_iana_daylight_saving(
     utc: str, expected: str, offset: str
 ) -> None:
     facts = current_time_facts(
-        "What time is it now in Split?", datetime.fromisoformat(utc).timestamp()
+        "What time is it now in Split exactly?", datetime.fromisoformat(utc).timestamp()
     )
     assert facts[0]["local_time"] == expected
     assert facts[0]["utc_offset"] == offset
@@ -168,18 +168,24 @@ async def test_english_followup_is_repaired_or_silently_skipped(
     await app.drain()
     app.model.responses["followup"].append(
         {
-            "reply": "Мне нравится тихая музыка без слов",
-            "dialogue_act": "opinion",
+            "reply": "Тебе нравится музыка без слов?",
+            "dialogue_act": "question",
+            "question_goal": "instrumental_music",
             "should_send": True,
         }
     )
     repaired = (
-        "Acoustic guitar has a lovely sound"
+        "Do you enjoy acoustic guitar?"
         if repair_language == "en"
-        else "Мне больше нравится музыка без слов"
+        else "Тебе нравится акустическая гитара?"
     )
     app.model.responses["repair"].append(
-        {"reply": repaired, "dialogue_act": "opinion", "should_send": True}
+        {
+            "reply": repaired,
+            "dialogue_act": "question",
+            "question_goal": "guitar_interest",
+            "should_send": True,
+        }
     )
     await due(app)
     await app.drain()

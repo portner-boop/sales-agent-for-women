@@ -5,7 +5,14 @@ import pytest
 from app.application import Application
 from app.modules.delivery.entities import SendResult
 from app.shared.storage import fetchall
-from tests.helpers import FakeSender, ScriptedModel, scalar, update
+from tests.helpers import (
+    FakeSender,
+    ScriptedModel,
+    conversation,
+    interpretation_operation,
+    scalar,
+    update,
+)
 
 
 def enable(app: Application) -> None:
@@ -54,9 +61,7 @@ def proposal(app: Application, should_send: bool = True) -> None:
 async def test_followup_runs_once_without_synthetic_input(app: Application) -> None:
     enable(app)
     await seed(app)
-    assert (
-        30 <= await scalar(app, "SELECT run_at FROM followups") - app.clock.now() <= 60
-    )
+    assert await scalar(app, "SELECT run_at FROM followups") - app.clock.now() == 60
     await app.drain()
     assert len(app.sender.sent) == 1
     proposal(app)
@@ -66,6 +71,9 @@ async def test_followup_runs_once_without_synthetic_input(app: Application) -> N
     data = next(data for task, data in app.model.calls if task == "followup")
     assert data["CURRENT_INPUT"] == []
     assert data["TRIGGER"]["kind"] == "silence"
+    assert data["APPLICATION_STATE"]["followup_enabled"] is True
+    assert data["STYLE_PLAN"]["eligible"] is True
+    assert data["DIALOGUE_PLAN"]["strategy"] == "ask_connected_question"
     assert await scalar(app, "SELECT COUNT(*) FROM messages WHERE role='user'") == 1
     assert await scalar(app, "SELECT COUNT(*) FROM said_ledger") == 2
     assert await scalar(app, "SELECT status FROM followups") == "prepared"
@@ -73,6 +81,75 @@ async def test_followup_runs_once_without_synthetic_input(app: Application) -> N
     app.clock.advance(3600)
     await app.drain()
     assert len(app.sender.sent) == 2
+
+
+@pytest.mark.parametrize(
+    "language,text,reply,followup",
+    [
+        (
+            "en",
+            "I like small cafes",
+            "Small cafes have more charm",
+            "Do you prefer a table by the window?",
+        ),
+        (
+            "ru",
+            "Мне нравятся маленькие кафе",
+            "У маленьких кафе больше характера",
+            "Ты любишь столики у окна?",
+        ),
+        (
+            "es",
+            "Me gustan los cafés pequeños",
+            "Los cafés pequeños tienen más encanto",
+            "¿Prefieres una mesa junto a la ventana?",
+        ),
+        (
+            "fr",
+            "J'aime les petits cafés",
+            "Les petits cafés ont plus de charme",
+            "Tu préfères une table près de la fenêtre?",
+        ),
+        (
+            "ar",
+            "أحب المقاهي الصغيرة",
+            "المقاهي الصغيرة لها سحر خاص",
+            "هل تحبين الطاولات القريبة من النافذة؟",
+        ),
+    ],
+)
+async def test_rejected_memory_preserves_normal_reply_language_before_followup(
+    app: Application, language: str, text: str, reply: str, followup: str
+) -> None:
+    enable(app)
+    await app.telegram.ingest([update(1, text)])
+    current = await conversation(app)
+    original = (await app.conversations.messages(current.scope))[0]
+    interpretation = interpretation_operation(original, "cafe_preference", "small")
+    interpretation["language"] = language
+    app.model.responses["interpret"].append(interpretation)
+    app.model.responses["validate_memory"].append(
+        {"decision": "reject", "reason_codes": ["INJECTED_MEMORY_FAILURE"]}
+    )
+    app.model.responses["generate"].append(
+        {"reply": reply, "dialogue_act": "opinion", "followup_allowed": True}
+    )
+    await app.drain()
+    assert app.sender.sent == [(1, reply)]
+    assert (await conversation(app)).language == language
+    app.model.responses["followup"].append(
+        {
+            "reply": followup,
+            "dialogue_act": "question",
+            "question_goal": "cafe_seat_preference",
+            "should_send": True,
+        }
+    )
+    await due(app)
+    await app.drain()
+    assert app.sender.sent[-1] == (1, followup)
+    context = next(data for task, data in app.model.calls if task == "followup")
+    assert context["APPLICATION_STATE"]["language"] == language
 
 
 @pytest.mark.parametrize(
@@ -85,13 +162,15 @@ async def test_new_input_cancels_followup(app: Application, text: str) -> None:
     app.clock.advance(150)
     await app.drain()
     assert all(task != "followup" for task, _ in app.model.calls)
-    assert (
-        await scalar(
-            app,
-            "SELECT COUNT(*) FROM followups WHERE status IN ('pending','generating')",
+    assert await scalar(
+        app,
+        "SELECT COUNT(*) FROM followups WHERE status IN ('pending','generating')",
+    ) == (1 if text == "Новая тема" else 0)
+    if text == "Новая тема":
+        assert (
+            await scalar(app, "SELECT status FROM followups ORDER BY rowid LIMIT 1")
+            == "cancelled"
         )
-        == 0
-    )
     if text == "/forget":
         assert await scalar(app, "SELECT COUNT(*) FROM followups") == 0
 
@@ -146,9 +225,7 @@ async def test_timer_starts_after_last_confirmed_part(app: Application) -> None:
     app.clock.advance(4)
     await app.delivery.send(parts[1]["id"])
     assert await scalar(app, "SELECT anchor_id FROM followups") == parts[1]["id"]
-    assert (
-        30 <= await scalar(app, "SELECT run_at FROM followups") - app.clock.now() <= 60
-    )
+    assert await scalar(app, "SELECT run_at FROM followups") - app.clock.now() == 60
 
 
 async def test_unknown_delivery_does_not_start_timer(app: Application) -> None:
@@ -183,13 +260,10 @@ async def test_optional_failures_are_silent(app: Application, mode: str) -> None
             app.clock.advance(91)
     await app.drain()
     assert len(app.sender.sent) == 1
-    assert (
-        await scalar(
-            app,
-            "SELECT COUNT(*) FROM followups WHERE status IN ('pending','generating')",
-        )
-        == 0
-    )
+    assert await scalar(
+        app,
+        "SELECT COUNT(*) FROM followups WHERE status IN ('pending','generating')",
+    ) == (1 if mode in {"skip", "error"} else 0)
     assert (
         await scalar(
             app, "SELECT COUNT(*) FROM scheduled_jobs WHERE status='dead_letter'"
@@ -396,14 +470,15 @@ async def test_semantic_rejection_has_one_independently_checked_repair(
     )
     app.model.responses["repair"].append(
         {
-            "reply": "Мне нравятся парки без аттракционов.",
-            "dialogue_act": "opinion",
+            "reply": "Ты любишь парки без аттракционов?",
+            "dialogue_act": "question",
+            "question_goal": "park_attractions",
             "should_send": True,
         }
     )
     await due(app)
     await app.drain()
-    assert app.sender.sent[-1][1] == "Мне нравятся парки без аттракционов"
+    assert app.sender.sent[-1][1] == "Ты любишь парки без аттракционов?"
     assert [task for task, _ in app.model.calls][-4:] == [
         "followup",
         "validate",

@@ -3,6 +3,7 @@ import unicodedata
 
 from app.modules.agent.entities import BuiltContext
 from app.modules.agent.language import wrong_reply_language
+from app.modules.agent.questions import question_errors
 from app.modules.agent.recovery import service_failure_reply
 from app.modules.agent.schemas import (
     FollowupProposal,
@@ -13,15 +14,34 @@ from app.modules.agent.style import (
     memory_profile_readout,
     unsolicited_day_part,
 )
+from app.modules.agent.style_plan import supported_imperfection
 
 
 def validate_reply(proposal: ReplyProposal, context: BuiltContext) -> list[str]:
+    if isinstance(proposal, FollowupProposal) and not proposal.should_send:
+        latest_user = next(
+            (
+                message["text"]
+                for message in reversed(context.data.get("RECENT_MESSAGES", []))
+                if message["role"] == "user"
+            ),
+            "",
+        )
+        if not proposal.skip_evidence or proposal.skip_evidence not in latest_user:
+            return ["FOLLOWUP_SKIP_WITHOUT_USER_EVIDENCE"]
+        return []
     errors = []
     if proposal.platform_transition and not context.data.get(
         "PLATFORM_TRANSITION", {}
     ).get("eligible"):
         errors.append("PLATFORM_TRANSITION_NOT_ALLOWED")
     text = proposal.full_reply.strip()
+    if isinstance(proposal, FollowupProposal) and proposal.should_send:
+        if not proposal.question_goal:
+            errors.append("FOLLOWUP_QUESTION_REQUIRED")
+    casual_limit = context.data.get("DIALOGUE_PLAN", {}).get("casual_character_limit")
+    if casual_limit and len(text) > casual_limit:
+        errors.append("OVERLOADED_CASUAL_REPLY")
     if service_failure_reply(text):
         errors.append("SERVICE_FAILURE_REPLY")
     if wrong_reply_language(text, context.data["APPLICATION_STATE"]["language"]):
@@ -31,7 +51,8 @@ def validate_reply(proposal: ReplyProposal, context: BuiltContext) -> list[str]:
         text,
         user_text,
         context.data["APPLICATION_STATE"]["dialogue_mode"] == "closing"
-        or bool(proposal.used_memory_ids or proposal.used_source_message_ids),
+        or context.data["APPLICATION_STATE"].get("current_day_part_confirmed", False)
+        or context.data["APPLICATION_STATE"].get("recall_scope", "none") != "none",
     ):
         errors.append("UNSOLICITED_TIME_OF_DAY")
     if formulaic_capability_reply(text):
@@ -49,15 +70,11 @@ def validate_reply(proposal: ReplyProposal, context: BuiltContext) -> list[str]:
     if "behappy2day" in text.casefold():
         errors.append("UNSTRUCTURED_PLATFORM_PROMOTION")
     transition = context.data.get("PLATFORM_TRANSITION", {})
-    notice_required = (
-        proposal.platform_transition
-        or transition.get("eligible")
-        or transition.get("required")
-    )
+    notice_required = proposal.platform_transition or transition.get("required")
     if notice_required and not (proposal.platform_notice or "").strip():
         errors.append("MISSING_PLATFORM_NOTICE")
     if proposal.platform_notice:
-        if not notice_required:
+        if not notice_required and not transition.get("eligible"):
             errors.append("UNEXPECTED_PLATFORM_NOTICE")
         if re.search(r"https?://|www\.", proposal.platform_notice, re.I):
             errors.append("PLATFORM_NOTICE_URL")
@@ -104,7 +121,7 @@ def validate_reply(proposal: ReplyProposal, context: BuiltContext) -> list[str]:
         and proposal.question_goal is not None
     ):
         errors.append("QUESTION_NOT_ALLOWED")
-    if context.data.get("DIALOGUE_PLAN", {}).get("requires_continuation") and re.search(
+    if context.data.get("DIALOGUE_PLAN", {}).get("reciprocal_input") and re.search(
         r"с тобой\s+(?:спокойно|приятно|хорошо)\s+(?:разговаривать|общаться|болтать|переписываться)|"
         r"(?:спокойно|приятно|хорошо)\s+с тобой\s+(?:разговаривать|общаться|болтать|переписываться)|"
         r"(?:спокойно|приятно|хорошо)\s+(?:разговаривать|общаться|болтать|переписываться)\s+с тобой|"
@@ -162,16 +179,14 @@ def validate_reply(proposal: ReplyProposal, context: BuiltContext) -> list[str]:
         r"\b(?:ivana|mostar|ивана|мостар)\b", text, re.I
     ):
         errors.append("FAMILY_DISCLOSURE")
-    for item in context.data["AGENDA"]:
-        if (
-            proposal.question_goal
-            and item["question_goal"] == proposal.question_goal
-            and item["question_time_scope"] == proposal.question_time_scope
-            and (
-                item["status"] in {"answered", "declined"}
-                or isinstance(proposal, FollowupProposal)
-                and item["status"] == "awaiting_user"
-            )
-        ):
-            errors.append("ALREADY_ANSWERED")
+    errors.extend(question_errors(proposal, context.data))
+    if proposal.casual_imperfection_used and not context.data.get("STYLE_PLAN", {}).get(
+        "allow_imperfection", False
+    ):
+        errors.append("IMPERFECTION_NOT_ALLOWED")
+    imperfection = proposal.casual_imperfection
+    if proposal.casual_imperfection_used != (imperfection is not None) or (
+        imperfection is not None and not supported_imperfection(imperfection, text)
+    ):
+        errors.append("IMPERFECTION_EVIDENCE_MISMATCH")
     return list(dict.fromkeys(errors))

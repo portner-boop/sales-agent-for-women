@@ -4,6 +4,7 @@ from collections.abc import Sequence
 from datetime import UTC, datetime
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
+from app.modules.agent.resources import response_text
 from app.modules.agent.schemas import CurrentTimeRequest
 from app.modules.conversations.entities import Message
 
@@ -28,9 +29,11 @@ STANDALONE_TIME_QUESTION = re.compile(
 def current_time_facts(text: str, timestamp: float) -> list[dict[str, str]]:
     if not TIME_QUESTION.search(text):
         return []
-    local = datetime.fromtimestamp(timestamp, UTC).astimezone(ZoneInfo("Europe/Zagreb"))
+    precise = bool(re.search(r"exact|precis|точн|до минуты", text, re.I))
+    local = local_clock(timestamp, "Europe/Zagreb", precise)
     return [
         {
+            "precision": "minute" if precise else "approximate",
             "city": city,
             "timezone": "Europe/Zagreb",
             "local_time": local.strftime("%H:%M"),
@@ -51,8 +54,11 @@ def standalone_time_reply(text: str, timestamp: float, language: str) -> str | N
     fact = facts[0]
     if language.split("-")[0] == "ru":
         city = {"Split": "Сплите", "Zagreb": "Загребе"}[fact["city"]]
-        return f"В {city} сейчас {fact['local_time']}"
-    return f"It’s {fact['local_time']} in {fact['city']} right now"
+    else:
+        city = fact["city"]
+    return response_text(
+        "approximate_time", language, city=city, clock=fact["local_time"]
+    )
 
 
 def resolve_current_times(
@@ -87,8 +93,9 @@ def resolve_current_times(
                 {"location": request.location, "reason": "unknown_timezone"}
             )
             continue
-        local = datetime.fromtimestamp(timestamp, UTC).astimezone(zone)
+        local = local_clock(timestamp, zone.key, request.precision == "minute")
         fact = {
+            "precision": request.precision,
             "city": request.location,
             "timezone": request.timezone,
             "local_time": local.strftime("%H:%M"),
@@ -98,3 +105,8 @@ def resolve_current_times(
         if fact not in facts:
             facts.append(fact)
     return facts, unresolved
+
+
+def local_clock(timestamp: float, timezone: str, precise: bool) -> datetime:
+    rounded = timestamp if precise else int((timestamp + 150) // 300) * 300
+    return datetime.fromtimestamp(rounded, UTC).astimezone(ZoneInfo(timezone))

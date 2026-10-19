@@ -1,3 +1,4 @@
+import asyncio
 import json
 from typing import Any
 
@@ -5,12 +6,120 @@ import pytest
 
 from app.application import Application
 from app.modules.agent.entities import SchemaT
-from app.modules.agent.schemas import TurnInterpretation
+from app.modules.agent.prompts import VALIDATOR_RULES
+from app.modules.agent.schemas import ReplyProposal, SemanticVerdict, TurnInterpretation
+from app.modules.agent.service import ActiveRun
 from app.modules.conversations.entities import Turn
 from app.modules.conversations.schemas import AgendaOperation
 from app.shared.entities import ContextOverflowError
 from app.shared.storage import Transaction
 from tests.helpers import conversation, interpretation_operation, scalar, update
+
+
+@pytest.fixture
+def context_token_budget() -> int:
+    return 12000
+
+
+@pytest.mark.parametrize(
+    "source_kind", ["exact", "missing", "excerpt", "other_version"]
+)
+async def test_cited_original_is_deduplicated_only_with_a_complete_matching_source(
+    app: Application, source_kind: str
+) -> None:
+    await app.telegram.ingest([update(1, "An important remembered detail. " * 500)])
+    current = await conversation(app)
+    message = (await app.conversations.messages(current.scope))[0]
+    source = message.as_data()
+    if source_kind == "excerpt":
+        source["text"] = message.text[:100]
+    elif source_kind == "other_version":
+        source["version"] = message.version + 1
+    data: dict[str, Any] = {
+        "MEMORY_DATA": {"sources": [] if source_kind == "missing" else [source]},
+        "RECENT_MESSAGES": [],
+        "HISTORY_STATUS": {"omitted_uncompressed_messages": 0},
+    }
+    builder = app.agent.builder
+    limit = builder.counter.count(data) + 256
+    builder.settings = builder.settings.model_copy(update={"context_tokens": limit})
+    data["RECENT_MESSAGES"] = [message.as_data()]
+    builder._fit_history(
+        data, [message], {message.id}, lambda: builder.counter.count(data)
+    )
+    if source_kind == "exact":
+        assert not data["RECENT_MESSAGES"]
+        assert data["MEMORY_DATA"]["sources"][0]["text"] == message.text
+        assert builder.counter.count(data) <= limit
+    else:
+        assert data["RECENT_MESSAGES"][0]["text"] == message.text
+
+
+@pytest.mark.parametrize("slack", [64, 1024])
+@pytest.mark.parametrize("recovering", [False, True])
+async def test_request_trims_optional_history_without_double_counting_overflow(
+    app: Application,
+    slack: int,
+    recovering: bool,
+) -> None:
+    await app.telegram.ingest([update(1, "Milo is six and I have two children")])
+    current = await conversation(app)
+    turn = await app.conversations.claim_turn(current.scope, app.clock.now())
+    assert turn is not None
+    started = asyncio.get_running_loop().time()
+    run = ActiveRun(
+        turn,
+        current,
+        started + 45,
+        started,
+        interpretation=TurnInterpretation(
+            intent="chat",
+            dialogue_mode="continuation",
+            language="en",
+            continue_conversation=True,
+        ),
+        proposal=ReplyProposal(reply="Milo is six", dialogue_act="recall"),
+        recovering=recovering,
+    )
+    await app.agent._build_context(run)
+    assert run.context is not None
+    rules = VALIDATOR_RULES + "\n" + "Check the supported facts carefully. " * 300
+
+    def request_size(data: dict[str, Any]) -> int:
+        return (
+            app.agent.builder.counter.count(
+                {
+                    "rules": rules,
+                    "data": data,
+                    "schema": SemanticVerdict.model_json_schema(),
+                }
+            )
+            + 500
+        )
+
+    payload = {"context": run.context.data, "reply": run.proposal.model_dump()}
+    limit = request_size(payload) + slack
+    app.agent.builder.settings = app.agent.builder.settings.model_copy(
+        update={"context_tokens": limit}
+    )
+    run.context.data["RECENT_MESSAGES"].append(
+        {
+            "id": "older_optional_message",
+            "version": 1,
+            "role": "user",
+            "text": "A long earlier discussion about parks. " * 1800,
+        }
+    )
+    assert request_size(payload) > limit
+    fitted = await app.agent._fit_request(run, rules, payload, SemanticVerdict)
+    assert request_size(fitted) <= limit
+    assert (
+        fitted["context"]["CURRENT_INPUT"][0]["text"]
+        == "Milo is six and I have two children"
+    )
+    assert fitted["reply"]["reply"] == "Milo is six"
+    assert fitted["context"]["DIALOGUE_PLAN"]["requires_continuation"] is False
+    assert fitted["context"]["DIALOGUE_PLAN"]["questions_allowed"] is True
 
 
 async def test_long_chat_continues_when_compaction_is_unavailable(
@@ -64,11 +173,14 @@ async def test_long_chat_continues_when_compaction_is_unavailable(
         sum(manifest["token_count_by_section"].values())
         <= app.settings.memory.context_tokens
     )
+    final_context = [
+        payload["context"] for task, payload in app.model.calls if task == "validate"
+    ][-1]
     supplied_ids = {
         message["id"]
-        for message in data["CURRENT_INPUT"]
-        + data["RECENT_MESSAGES"]
-        + data["MEMORY_DATA"]["sources"]
+        for message in final_context["CURRENT_INPUT"]
+        + final_context["RECENT_MESSAGES"]
+        + final_context["MEMORY_DATA"]["sources"]
     }
     assert {message["id"] for message in manifest["messages"]} == supplied_ids
     messages = await app.conversations.messages(current.scope)

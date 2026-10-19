@@ -109,7 +109,7 @@ async def test_closed_preview_can_answer_explicit_platform_info_request(
     current = await conversation(app)
     assert app.sender.sent[-1][1] == app.commerce.platform_info_text("ru")
     assert current.preview_closed_at is not None
-    assert not app.commerce.can_reply(current)
+    assert app.commerce.can_reply(current)
     assert not app.model.calls
 
 

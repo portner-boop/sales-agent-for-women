@@ -75,7 +75,7 @@ async def test_incident_repeated_rejection_has_grounded_last_resort(
     )
 
 
-async def test_recovery_keeps_required_hook_and_remains_independently_checked(
+async def test_conservative_recovery_remains_independently_checked(
     app: Application,
 ) -> None:
     for task in ("generate", "repair"):
@@ -93,10 +93,7 @@ async def test_recovery_keeps_required_hook_and_remains_independently_checked(
     app.model.responses["recover"].append(
         {
             "reply": "Настроение хорошее, хочется поболтать",
-            "continuation": "Как твой день?",
             "dialogue_act": "chat",
-            "question_goal": "day",
-            "question_part": "continuation",
             "followup_allowed": True,
         }
     )
@@ -106,16 +103,15 @@ async def test_recovery_keeps_required_hook_and_remains_independently_checked(
     await app.drain()
     assert app.sender.sent == [
         (1, "Настроение хорошее, хочется поболтать"),
-        (1, "Как твой день?"),
     ]
     recover = next(data for task, data in app.model.calls if task == "recover")
-    assert recover["DIALOGUE_PLAN"]["requires_continuation"]
+    assert not recover["DIALOGUE_PLAN"]["requires_continuation"]
     assert app.model.calls[-1][0] == "validate_recovery"
     assert await scalar(app, "SELECT status FROM agent_runs") == "prepared"
     metadata = json.loads(
         await scalar(app, "SELECT proposal_json FROM outbox_messages")
     )
-    assert metadata["followup_allowed"]
+    assert metadata["followup_allowed"] is app.agent.settings.followup_enabled
 
 
 async def test_recovery_preserves_valid_continuation_after_interpretation_failure(

@@ -69,4 +69,6 @@ def persona_projection(permissions: Sequence[str], timestamp: float) -> dict[str
     )
     for permission in permissions:
         result.update(DISCLOSURES.get(permission, {}))
+    if "family" in permissions:
+        result["children"] = DISCLOSURES["relationship"]["children"]
     return result

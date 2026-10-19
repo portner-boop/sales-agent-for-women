@@ -29,11 +29,84 @@ class AgentRepository:
                 tx,
                 "SELECT MAX(o.created_at)-r.started_at+COALESCE(json_extract(r.metrics_json,'$.queued_seconds'),0) seconds FROM outbox_messages o JOIN agent_runs r ON o.turn_id=r.turn_id WHERE o.kind='reply' AND COALESCE(json_extract(o.proposal_json,'$.origin'),'')!='followup' GROUP BY r.id HAVING COUNT(*)=SUM(CASE WHEN o.status='delivered' THEN 1 ELSE 0 END) ORDER BY MAX(o.created_at) DESC LIMIT 1000",
             )
+            transport = await fetchall(
+                tx,
+                "SELECT json_extract(proposal_json,'$.transport_seconds') seconds FROM outbox_messages WHERE json_extract(proposal_json,'$.transport_seconds') IS NOT NULL ORDER BY created_at DESC LIMIT 1000",
+            )
         values = [json.loads(row["metrics_json"]) for row in runs]
         events = [event for value in values for event in value.get("llm_events", [])]
         seconds = sorted(float(row["seconds"]) for row in latencies)
         completion_seconds = sorted(float(row["seconds"]) for row in completions)
+        phases = {}
+        for phase in (
+            "queued_seconds",
+            "lock_seconds",
+            "context_seconds",
+            "selection_seconds",
+            "generation_seconds",
+            "repair_seconds",
+        ):
+            samples = sorted(float(value[phase]) for value in values if phase in value)
+            phases[phase] = {
+                "samples": len(samples),
+                "p50": samples[len(samples) // 2] if samples else None,
+                "p95": (
+                    samples[max(0, ceil(len(samples) * 0.95) - 1)] if samples else None
+                ),
+            }
+        phase_samples = {
+            "transport_seconds": [float(row["seconds"]) for row in transport],
+            "pacing_planned_seconds": [
+                sum(value["pacing_seconds"])
+                for value in values
+                if "pacing_seconds" in value
+            ],
+            "llm_queue_seconds": [
+                float(event["queue_seconds"])
+                for event in events
+                if "queue_seconds" in event
+            ],
+            "llm_request_seconds": [
+                float(event["model_seconds"])
+                for event in events
+                if "model_seconds" in event
+            ],
+            "interpretation_seconds": [
+                float(event["seconds"])
+                for event in events
+                if event["task"] == "interpret"
+            ],
+            "validation_seconds": [
+                float(event["seconds"])
+                for event in events
+                if event["task"].startswith("validate")
+            ],
+        }
+        for phase, samples in phase_samples.items():
+            samples.sort()
+            phases[phase] = {
+                "samples": len(samples),
+                "p50": samples[len(samples) // 2] if samples else None,
+                "p95": (
+                    samples[max(0, ceil(len(samples) * 0.95) - 1)] if samples else None
+                ),
+            }
         return {
+            "phase_latency": phases,
+            "policy_versions": sorted(
+                {
+                    value["policy_version"]
+                    for value in values
+                    if "policy_version" in value
+                }
+            ),
+            "repair_runs_last_1000": sum(
+                any(
+                    event["task"] in {"repair", "recover"}
+                    for event in value.get("llm_events", [])
+                )
+                for value in values
+            ),
             **{f"runs_{row['status']}": row["count"] for row in rows},
             "llm_calls_last_1000_runs": sum(
                 value.get("llm_calls", 0) for value in values

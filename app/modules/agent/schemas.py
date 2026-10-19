@@ -11,6 +11,7 @@ class CurrentTimeRequest(BaseModel):
     location: str = Field(min_length=1, max_length=120)
     source_message_id: str = Field(min_length=1, max_length=120)
     timezone: str | None = Field(default=None, min_length=1, max_length=100)
+    precision: Literal["approximate", "minute"] = "approximate"
 
 
 class TurnInterpretation(BaseModel):
@@ -28,6 +29,24 @@ class TurnInterpretation(BaseModel):
     ]
     language: str
     continue_conversation: bool = False
+    question_interrupted: bool = False
+    policy_topics: list[
+        Literal[
+            "social",
+            "recall",
+            "time",
+            "contact",
+            "verification",
+            "photo",
+            "support",
+            "commerce",
+            "unknown",
+        ]
+    ] = Field(default_factory=list)
+    recall_scope: Literal["none", "general", "specific", "all"] = "none"
+    user_requested_questions: bool = False
+    detail_requested: bool = False
+    current_day_part_confirmed: bool = False
     current_time_requests: list[CurrentTimeRequest] = Field(
         default_factory=list, max_length=5
     )
@@ -54,6 +73,12 @@ class TurnInterpretation(BaseModel):
     history_query: bool = False
 
 
+class ChatImperfection(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    written: str = Field(min_length=1, max_length=80)
+    standard: str = Field(min_length=1, max_length=80)
+
+
 class ReplyProposal(BaseModel):
     model_config = ConfigDict(extra="forbid")
     reply: str = Field(min_length=1, max_length=4000)
@@ -65,6 +90,10 @@ class ReplyProposal(BaseModel):
     question_goal: QuestionGoal | None = None
     question_part: Literal["reply", "continuation"] | None = None
     question_time_scope: str = "stable"
+    question_subject_id: str = "user_self"
+    question_thread_id: str | None = None
+    casual_imperfection_used: bool = False
+    casual_imperfection: ChatImperfection | None = None
     new_commitment_candidate: str | None = None
     followup_allowed: bool = False
     platform_transition: bool = False
@@ -95,13 +124,16 @@ class ContinuingReplyProposal(ReplyProposal):
 
 class RecoveryReplyProposal(ReplyProposal):
     requested_action: Literal["none"] = "none"
+    platform_transition: Literal[False] = False
+    platform_notice: None = None
 
 
 class FollowupProposal(ReplyProposal):
     platform_transition: Literal[False] = False
     should_send: bool = Field(
-        description="Whether to send this current proactive message. True requires a reply; false requires an empty reply. Independent of followup_allowed, which prevents another future timer."
+        description="Send one connected question. False is only for a user boundary, departure or unavailability supported by skip_evidence."
     )
+    skip_evidence: str | None = Field(default=None, min_length=1, max_length=500)
     reply: str = Field(default="", max_length=280)
     continuation: None = None
     requested_action: Literal["none"] = "none"
@@ -125,6 +157,7 @@ class SemanticVerdict(BaseModel):
 
 
 class ContextManifest(BaseModel):
+    policy: dict[str, Any] = Field(default_factory=dict)
     scope_id: str
     epoch: int
     input_revision: int

@@ -16,7 +16,7 @@ def reject_all(app: Application, statement: str) -> None:
                 "decision": "reject",
                 "reason_codes": ["UNSUPPORTED_PERSONA_CLAIM"],
                 "violating_text": statement,
-                "explanation": "The candidate claims an unsupported human identity.",
+                "explanation": "Injected validator rejection for recovery-path testing.",
             }
         )
 

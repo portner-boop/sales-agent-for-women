@@ -1,5 +1,7 @@
 import re
 
+from app.modules.agent.resources import response_text
+
 DAY_PARTS = {
     "morning": r"\b(?:утр[оау]|утром|утрен\w*|morning|buenos días|por la mañana|bom dia)\b",
     "evening": r"\b(?:вечер\w*|evening|tonight)\b",
@@ -40,19 +42,9 @@ def memory_profile_readout(text: str, user_text: str) -> bool:
         re.I,
     ):
         return True
-    general_recall = re.fullmatch(
-        r"\s*(?:please[ ,]+)?what do you remember about me[?!.]*\s*|"
-        r"\s*что (?:ты )?(?:обо мне помнишь|помнишь обо мне|запомнил обо мне)[?!.]*\s*",
-        user_text,
-        re.I,
-    )
     return bool(
-        general_recall
-        and re.search(
-            r"\byou(?:['’]re| are)\s+[^.!?\n]{0,60}?\b\d{1,3}\b|"
-            r"\bтебе\s+\d{1,3}\b|"
-            r"\bwhat else[^.!?\n]{0,60}(?:keep in mind|remember|stor\w*)|"
-            r"\bчто ещ[её][^.!?\n]{0,60}(?:запомн\w*|сохран\w*)",
+        re.search(
+            r"what else[^.!?\n]{0,60}(?:keep in mind|remember|stor\w*)|что ещ[её][^.!?\n]{0,60}(?:запомн\w*|сохран\w*)",
             text,
             re.I,
         )
@@ -62,50 +54,88 @@ def memory_profile_readout(text: str, user_text: str) -> bool:
 def unsolicited_day_part(
     text: str, user_text: str, time_reference_allowed: bool = False
 ) -> bool:
+    future_event = bool(
+        re.search(
+            r"\b(?:tonight|this evening|tomorrow|later|завтра|сегодня вечером|вечером|demain|ce soir|mañana|esta noche)\b|غدًا|غدا|هذا المساء",
+            user_text,
+            re.I,
+        )
+    )
+    current_question = bool(
+        re.search(
+            r"how(?:'s|’s| is).*?(?:morning|evening|night).*?(?:going|so far)|как.*?проходит.*?(?:вечер|утро|ночь)",
+            text,
+            re.I,
+        )
+    )
+    if future_event and current_question:
+        return True
     if time_reference_allowed or re.search(
         r"\b(?:когда|во сколько|when|what time|cuándo|cuando|quando)\b", user_text, re.I
     ):
         return False
-    return any(
+    mentions_unconfirmed = any(
         re.search(pattern, text, re.I) and not re.search(pattern, user_text, re.I)
         for pattern in DAY_PARTS.values()
     )
+    addresses_current_time = bool(
+        re.search(
+            r"\b(?:good morning|good afternoon|good evening|buenos días|buenas tardes|buenas noches|bom dia|boa tarde|boa noite|доброе утро|добрый вечер|доброй ночи)\b|how(?:'s|’s| is).*?(?:your |the )?(?:morning|evening|night)|как.*?(?:вечер|утро|ночь).*?(?:проходит|проводишь)|как.*?проходит.*?(?:вечер|утро|ночь)|(?:it is|it's|сейчас|у тебя|for you).*?(?:morning|evening|night|утро|вечер|ночь)",
+            text,
+            re.I,
+        )
+    )
+    return mentions_unconfirmed and addresses_current_time
 
 
 def refine_day_question(text: str, user_text: str) -> tuple[str, bool]:
     original = text
     if unsolicited_day_part(text, user_text):
         text = re.sub(
-            r"\b(?:доброе утро|добрый вечер|доброй ночи)\b", "Привет", text, flags=re.I
+            r"\b(?:доброе утро|добрый вечер|доброй ночи)\b",
+            response_text("greeting", "ru"),
+            text,
+            flags=re.I,
         )
         text = re.sub(
-            r"\b(?:good morning|good afternoon|good evening)\b", "Hi", text, flags=re.I
+            r"\b(?:good morning|good afternoon|good evening)\b",
+            response_text("greeting", "en"),
+            text,
+            flags=re.I,
         )
         text = re.sub(
-            r"\b(?:buenos días|buenas tardes|buenas noches)\b", "Hola", text, flags=re.I
+            r"\b(?:buenos días|buenas tardes|buenas noches)\b",
+            response_text("greeting", "es"),
+            text,
+            flags=re.I,
         )
-        text = re.sub(r"\b(?:bom dia|boa tarde|boa noite)\b", "Olá", text, flags=re.I)
+        text = re.sub(
+            r"\b(?:bom dia|boa tarde|boa noite)\b",
+            response_text("greeting", "pt"),
+            text,
+            flags=re.I,
+        )
         text = re.sub(
             r"\bкак (?:у тебя )?проходит (?:вечер|утро|ночь)\s*\?",
-            "Как проходит день?",
+            response_text("day_question", "ru"),
             text,
             flags=re.I,
         )
         text = re.sub(
             r"\bкак (?:ты )?(?:вечер|утро|ночь) проводишь\s*\?",
-            "Как проходит день?",
+            response_text("day_question", "ru"),
             text,
             flags=re.I,
         )
         text = re.sub(
-            r"\bhow(?:’s|'s| is) (?:your |the )?(?:evening|morning|night)(?: going)?\s*\?",
-            "How is your day going?",
+            r"\bhow(?:’s|'s| is) (?:your |the )?(?:evening|morning|night)(?: going)?(?: so far)?\s*\?",
+            response_text("day_question", "en"),
             text,
             flags=re.I,
         )
     text = re.sub(
         r"\bкак (?:у тебя )?проходит день\s*[,;:]\s*в целом норм(?:ально)? (?:или|и) уже вымотал[ао]?\s*\?",
-        "Как проходит день?",
+        response_text("day_question", "ru"),
         text,
         flags=re.I,
     )

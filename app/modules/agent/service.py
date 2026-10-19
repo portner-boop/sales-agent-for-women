@@ -6,10 +6,10 @@ from dataclasses import dataclass, field
 from typing import Any, TypedDict
 
 from langgraph.graph import END, START, StateGraph
+from openai import APIConnectionError, APIStatusError
 from pydantic import ValidationError
 
 from app.modules.agent.capabilities import (
-    is_contact_request,
     is_photo_request,
     is_standalone_photo_request,
     photo_language,
@@ -27,18 +27,27 @@ from app.modules.agent.errors import (
     ModelOutputError,
     ReplyRejectedError,
 )
+from app.modules.agent.initiative import followup_eligibility
 from app.modules.agent.language import (
     language_instruction,
     reply_language,
     reply_validation_instruction,
 )
+from app.modules.agent.policy import (
+    RuleBundle,
+    RuleSelector,
+)
 from app.modules.agent.prompts import (
+    CATALOG,
     FOLLOWUP_RULES,
     FOLLOWUP_VALIDATOR_RULES,
+    GENERATOR_CONTRACT,
     GENERATOR_RULES,
     INTERPRETER_RULES,
     MEMORY_VALIDATOR_RULES,
     PLATFORM_TRANSITION_RULES,
+    RECOVERY_RULES,
+    STRUCTURE_REPAIR_RULES,
     VALIDATOR_RULES,
     platform_turn_instruction,
 )
@@ -58,7 +67,14 @@ from app.modules.agent.schemas import (
     SemanticVerdict,
     TurnInterpretation,
 )
+from app.modules.agent.segmentation import delivery_parts
 from app.modules.agent.style import refine_day_question, strip_terminal_period
+from app.modules.agent.style_plan import (
+    apply_casual_imperfection,
+    reduce_letter_imperfections,
+    semantic_reply,
+    supported_imperfection,
+)
 from app.modules.agent.time import standalone_time_reply
 from app.modules.agent.validation import validate_reply
 from app.modules.commerce.requests import (
@@ -112,10 +128,16 @@ class ActiveRun:
     interpretation: TurnInterpretation | None = None
     interpreter_context: dict[str, Any] | None = None
     context: BuiltContext | None = None
+    context_reference_time: float | None = None
     proposal: ReplyProposal | None = None
     followup: FollowupTicket | None = None
     on_prepared: Callable[[Transaction], Awaitable[None]] | None = None
     recovering: bool = False
+    recovery_invitation_pending: bool = False
+    rule_bundle: RuleBundle | None = None
+    context_seconds: float = 0
+    selection_seconds: float = 0
+    pacing_seconds: tuple[float, ...] = ()
 
 
 class AgentService:
@@ -146,6 +168,8 @@ class AgentService:
         self.clock = clock
         self.settings = settings
         self.on_preview_closed = on_preview_closed
+        self.catalog = CATALOG
+        self.rule_selector = RuleSelector(self.catalog, self.builder.counter.count)
         self.active: dict[str, ActiveRun] = {}
         self.tasks: dict[str, set[asyncio.Task[None]]] = defaultdict(set)
         self.locks: defaultdict[str, asyncio.Lock] = defaultdict(asyncio.Lock)
@@ -182,7 +206,14 @@ class AgentService:
         data: dict[str, Any],
         schema: type[SchemaT],
     ) -> SchemaT:
+        data = {**data, "POLICY_VERSION": self.catalog.version}
         if task in {"generate", "repair", "recover", "followup"}:
+            bundle = run.rule_bundle or self.rule_selector.full(
+                "recovery_without_interpretation"
+            )
+            rules = rules.replace(
+                GENERATOR_RULES, GENERATOR_CONTRACT + "\n" + bundle.text
+            )
             rules += language_instruction(data["APPLICATION_STATE"]["language"])
             rules += platform_turn_instruction(data.get("PLATFORM_TRANSITION", {}))
         elif task in {"validate", "validate_repair", "validate_recovery"}:
@@ -228,6 +259,7 @@ class AgentService:
                     attempt == 1
                     or run.retries >= 2
                     or delay is None
+                    or delay >= self.settings.llm_attempt_seconds
                     or run.calls >= self.settings.llm_max_calls
                     or run.deadline - asyncio.get_running_loop().time() <= delay + 0.1
                 ):
@@ -238,7 +270,7 @@ class AgentService:
                 )
                 if isinstance(error, (ValidationError, ModelOutputError)):
                     data = {**data, "STRUCTURE_ERRORS": structure_errors(error)}
-                    rules += "\nCorrect STRUCTURE_ERRORS. Return the complete JSON object matching JSON_SCHEMA, with every required field and no extra fields."
+                    rules += STRUCTURE_REPAIR_RULES
             finally:
                 metrics["seconds"] = asyncio.get_running_loop().time() - started
                 run.llm_events.append(metrics)
@@ -313,19 +345,25 @@ class AgentService:
                     ),
                 }
             )
-            await self._build_context(
-                run, request_reserve_tokens=max(0, total - baseline) + 128
-            )
-            data = (
-                {**data, "context": run.context.data}
-                if "context" in data
-                else {
-                    **run.context.data,
-                    **{
-                        key: value for key, value in data.items() if key not in old_keys
-                    },
-                }
-            )
+            reserve = max(0, total - baseline)
+            for _ in range(3):
+                await self._build_context(run, request_reserve_tokens=reserve)
+                data = (
+                    {**data, "context": run.context.data}
+                    if "context" in data
+                    else {
+                        **run.context.data,
+                        **{
+                            key: value
+                            for key, value in data.items()
+                            if key not in old_keys
+                        },
+                    }
+                )
+                overflow = tokens(data) - limit
+                if overflow <= 0:
+                    return data
+                reserve += overflow + 64
         if tokens(data) > limit:
             raise ContextOverflowError("LLM request exceeds its input budget")
         return data
@@ -353,6 +391,24 @@ class AgentService:
             await asyncio.gather(*tasks, return_exceptions=True)
 
     async def process_followup(
+        self,
+        ticket: FollowupTicket,
+        on_prepared: Callable[[Transaction], Awaitable[None]],
+    ) -> bool:
+        remaining = min(
+            self.settings.turn_deadline_seconds,
+            ticket.expires_at - self.clock.now(),
+        )
+        if remaining <= 0:
+            return False
+        try:
+            async with asyncio.timeout(remaining):
+                return await self._process_followup(ticket, on_prepared)
+        except TimeoutError as error:
+            logger.warning("followup_deadline id=%s", ticket.id)
+            raise JobRetryError("FOLLOWUP_DEADLINE_EXCEEDED") from error
+
+    async def _process_followup(
         self,
         ticket: FollowupTicket,
         on_prepared: Callable[[Transaction], Awaitable[None]],
@@ -398,6 +454,24 @@ class AgentService:
                 async with asyncio.timeout(limit):
                     await self._build_context(run)
                     assert run.context is not None
+                    if run.context.data["DIALOGUE_PLAN"][
+                        "waiting_question_message_ids"
+                    ]:
+                        run.validation_events.append(
+                            {
+                                "stage": "followup_skipped",
+                                "reason": "LATEST_QUESTION_PENDING",
+                            }
+                        )
+                        return False
+                    if not run.context.data["DIALOGUE_PLAN"]["questions_allowed"]:
+                        run.validation_events.append(
+                            {
+                                "stage": "followup_skipped",
+                                "reason": "QUESTIONS_NOT_ALLOWED",
+                            }
+                        )
+                        return False
                     run.proposal = await self._call(
                         run,
                         "followup",
@@ -405,7 +479,16 @@ class AgentService:
                         run.context.data,
                         FollowupProposal,
                     )
-                    await self._validate(state)
+                    try:
+                        await self._validate(state)
+                    except ReplyRejectedError as error:
+                        await self._recover(identifier, error)
+                        if (
+                            isinstance(run.proposal, FollowupProposal)
+                            and run.proposal.should_send
+                        ):
+                            status = "prepared"
+                        return status == "prepared"
                     if (
                         isinstance(run.proposal, FollowupProposal)
                         and run.proposal.should_send
@@ -423,6 +506,11 @@ class AgentService:
                     {"stage": "followup_failure", "error_code": code}
                 )
                 logger.warning("followup_skipped run=%s code=%s", identifier, code)
+                raise JobRetryError(
+                    code,
+                    retry_after=retry_delay(error) or 0,
+                    permanent=not can_retry_response(error),
+                ) from error
             finally:
                 self.active.pop(identifier, None)
                 await self.repository.finish(
@@ -438,6 +526,10 @@ class AgentService:
                         "validation_events": run.validation_events,
                         "elapsed_seconds": asyncio.get_running_loop().time() - started,
                         "queued_seconds": queued_seconds,
+                        "context_seconds": run.context_seconds,
+                        "selection_seconds": run.selection_seconds,
+                        "pacing_seconds": list(run.pacing_seconds),
+                        "policy_version": self.catalog.version,
                     },
                     code,
                 )
@@ -446,6 +538,39 @@ class AgentService:
     async def _process(self, job: Job) -> None:
         if job.scope is None:
             raise ValueError("Turn job requires a scope")
+        cutoff = self.clock.now() - 180
+        async with self.repository.database.read() as tx:
+            fresh = await fetchone(
+                tx,
+                "SELECT 1 FROM messages m JOIN message_versions v ON v.message_id=m.id AND v.version=m.current_version WHERE m.scope_id=? AND m.epoch=? AND m.pending=1 AND v.received_at>? LIMIT 1",
+                (job.scope.scope_id, job.scope.epoch, cutoff),
+            )
+        if fresh is not None:
+            await self.conversations.expire_pending(job.scope, cutoff)
+        async with self.repository.database.read() as tx:
+            row = await fetchone(
+                tx,
+                "SELECT MIN(v.received_at) received_at FROM messages m JOIN message_versions v ON v.message_id=m.id AND v.version=m.current_version WHERE m.scope_id=? AND m.epoch=? AND m.pending=1",
+                (job.scope.scope_id, job.scope.epoch),
+            )
+        if row is None or row["received_at"] is None:
+            return
+        received_at = float(row["received_at"])
+        remaining = 180 - max(0, self.clock.now() - received_at)
+        waiting = asyncio.get_running_loop().time()
+        if remaining <= 0 or job.attempts > 3:
+            await self._process_locked(job, waiting, fallback_only=True)
+            return
+        try:
+            async with asyncio.timeout(remaining):
+                await self._process_locked(job, waiting)
+        except TimeoutError:
+            await self._process_locked(job, waiting, fallback_only=True)
+
+    async def _process_locked(
+        self, job: Job, waiting: float, fallback_only: bool = False
+    ) -> None:
+        assert job.scope is not None
         async with self.locks[job.scope.scope_id]:
             conversation = await self.conversations.get(job.scope.scope_id)
             if conversation.scope != job.scope:
@@ -471,26 +596,11 @@ class AgentService:
                 await self.repository.database.write(skip)
                 return
             started = asyncio.get_running_loop().time()
-            limit = (
-                self.settings.first_deadline_seconds
-                if conversation.first_reply_at is None
-                else self.settings.turn_deadline_seconds
-            )
+            limit = self.settings.turn_deadline_seconds
             received_at = min(message.received_at for message in turn.messages)
-            retry_requested_at = job.payload.get("retry_requested_at")
-            if retry_requested_at is None and (
-                job.attempts > 1
-                or any(message.turn_id is not None for message in turn.messages)
-            ):
-                retry_requested_at = self.clock.now()
-            if retry_requested_at is not None:
-                if (
-                    not isinstance(retry_requested_at, (int, float))
-                    or retry_requested_at > self.clock.now()
-                ):
-                    raise ValueError("Invalid retry request time")
-                received_at = max(received_at, retry_requested_at)
             queued = max(0, self.clock.now() - received_at)
+            limit = min(limit, max(0.001, 180 - queued))
+            final_attempt = job.is_final_attempt or queued + limit >= 180
             run = ActiveRun(
                 turn,
                 conversation,
@@ -505,24 +615,32 @@ class AgentService:
             retry_allowed = True
             retry_after = 0.0
             try:
-                async with asyncio.timeout(limit):
-                    if platform_info_requested:
-                        await self._prepare_platform_info(run)
-                    else:
-                        await self.graph.ainvoke(
-                            {
-                                "run_id": identifier,
-                                "turn_id": turn.id,
-                                "scope_id": turn.scope.scope_id,
-                                "epoch": turn.scope.epoch,
-                                "phase": "start",
-                            },
-                            {
-                                "configurable": {
-                                    "thread_id": f"{turn.scope.scope_id}:{turn.scope.epoch}"
-                                }
-                            },
-                        )
+                if fallback_only or queued >= 180:
+                    status, code = "fallback", "RESPONSE_DEADLINE"
+                    retry_required = not await self._fallback(
+                        run, code, final_attempt=True
+                    )
+                    if retry_required:
+                        status = "unanswered"
+                else:
+                    async with asyncio.timeout(limit):
+                        if platform_info_requested:
+                            await self._prepare_platform_info(run)
+                        else:
+                            await self.graph.ainvoke(
+                                {
+                                    "run_id": identifier,
+                                    "turn_id": turn.id,
+                                    "scope_id": turn.scope.scope_id,
+                                    "epoch": turn.scope.epoch,
+                                    "phase": "start",
+                                },
+                                {
+                                    "configurable": {
+                                        "thread_id": f"{turn.scope.scope_id}:{turn.scope.epoch}"
+                                    }
+                                },
+                            )
             except StaleStateError:
                 status, code = "cancelled", "STALE_STATE"
             except asyncio.CancelledError:
@@ -552,16 +670,18 @@ class AgentService:
                 try:
                     if self._has_photo_request(run):
                         await self._fallback(
-                            run, code, job.is_final_attempt or not retry_allowed
+                            run, code, final_attempt or not retry_allowed
                         )
                         run.validation_events.append({"stage": "photo_failure_refusal"})
                         status, code = "prepared", None
-                    elif isinstance(error, (ValueError, EvidenceError)):
+                    elif isinstance(
+                        error, (ValueError, EvidenceError, ReplyRejectedError)
+                    ):
                         await self._recover(identifier, error)
                         status, code = "prepared", None
                     else:
                         retry_required = not await self._fallback(
-                            run, code, job.is_final_attempt or not retry_allowed
+                            run, code, final_attempt or not retry_allowed
                         )
                 except asyncio.CancelledError:
                     status, code = "cancelled", "INTERRUPTED"
@@ -576,12 +696,12 @@ class AgentService:
                         {"stage": "recovery_failure", "error_code": code}
                     )
                     retry_required = not await self._fallback(
-                        run, code, job.is_final_attempt or not retry_allowed
+                        run, code, final_attempt or not retry_allowed
                     )
                 if retry_required:
                     status = (
                         "unanswered"
-                        if job.is_final_attempt or not retry_allowed
+                        if final_attempt or not retry_allowed
                         else "deferred"
                     )
                 if status in {"fallback", "deferred", "unanswered"}:
@@ -600,12 +720,35 @@ class AgentService:
                         "validation_events": run.validation_events,
                         "elapsed_seconds": asyncio.get_running_loop().time() - started,
                         "queued_seconds": queued,
+                        "context_seconds": run.context_seconds,
+                        "selection_seconds": run.selection_seconds,
+                        "pacing_seconds": list(run.pacing_seconds),
+                        "lock_seconds": started - waiting,
+                        "policy_version": self.catalog.version,
+                        "generation_seconds": sum(
+                            e["seconds"]
+                            for e in run.llm_events
+                            if e["task"] in {"generate", "followup"}
+                        ),
+                        "repair_seconds": sum(
+                            e["seconds"]
+                            for e in run.llm_events
+                            if e["task"]
+                            in {
+                                "repair",
+                                "recover",
+                                "validate_repair",
+                                "validate_recovery",
+                            }
+                        ),
                     },
                     code,
                 )
             if retry_required:
                 raise JobRetryError(
-                    code or "RESPONSE_UNAVAILABLE", retry_after, not retry_allowed
+                    code or "RESPONSE_UNAVAILABLE",
+                    retry_after,
+                    final_attempt or not retry_allowed,
                 )
 
     async def _platform_info_requested(self, turn: Turn) -> bool:
@@ -708,13 +851,51 @@ class AgentService:
         interpretation = interpretation.model_copy(
             update={
                 "memory_operations": [
-                    operation
+                    (
+                        operation.model_copy(update={"kind": "conversation_glossary"})
+                        if operation.operation == "add"
+                        and operation.modality == "figurative"
+                        and operation.kind in {"fact", "preference"}
+                        else operation
+                    )
                     for operation in interpretation.memory_operations
                     if operation.operation not in {"no_change", "needs_clarification"}
                 ]
             }
         )
         run.interpretation = interpretation
+        try:
+            await self._resolve_memory(run, interpretation)
+        except EvidenceError as error:
+            run.validation_events.append(
+                {
+                    "stage": "memory_patch_discarded",
+                    "error_code": failure_code(error),
+                    "reason": str(error)[:256],
+                }
+            )
+            run.interpretation = interpretation.model_copy(
+                update={
+                    "entities": [],
+                    "memory_operations": [],
+                    "agenda_operations": [],
+                }
+            )
+            await self.memory.resolve(
+                run.conversation.snapshot,
+                run.turn.messages,
+                [],
+                [],
+                [],
+                interpretation.language,
+                interpretation.dialogue_mode,
+            )
+        run.conversation = await self.conversation_service.current(run.turn)
+        return {"phase": "resolved"}
+
+    async def _resolve_memory(
+        self, run: ActiveRun, interpretation: TurnInterpretation
+    ) -> None:
         if (
             interpretation.memory_operations
             or interpretation.entities
@@ -745,10 +926,28 @@ class AgentService:
                 self.builder.counter.count(data) + 500
                 > self.builder.settings.context_tokens
             ):
-                raise ContextOverflowError("Memory validation input exceeds the budget")
-            verdict = await self._call(
-                run, "validate_memory", MEMORY_VALIDATOR_RULES, data, SemanticVerdict
-            )
+                raise EvidenceError("Memory validation input exceeds the budget")
+            try:
+                verdict = await self._call(
+                    run,
+                    "validate_memory",
+                    MEMORY_VALIDATOR_RULES,
+                    data,
+                    SemanticVerdict,
+                )
+            except (
+                ValidationError,
+                ModelOutputError,
+                ContextOverflowError,
+                TimeoutError,
+                APIConnectionError,
+                APIStatusError,
+            ) as error:
+                if isinstance(error, APIStatusError) and not can_retry_response(error):
+                    raise
+                raise EvidenceError(
+                    "Memory validation unavailable: " + failure_code(error)
+                ) from error
             run.validation_events.append({"stage": "memory", **verdict.model_dump()})
             if verdict.decision != "accept":
                 if interpretation.memory_operations or interpretation.entities:
@@ -767,8 +966,6 @@ class AgentService:
             interpretation.language,
             interpretation.dialogue_mode,
         )
-        run.conversation = await self.conversation_service.current(run.turn)
-        return {"phase": "resolved"}
 
     async def _context(self, state: GraphState) -> dict[str, str]:
         return await self._build_context(self.active[state["run_id"]])
@@ -776,6 +973,7 @@ class AgentService:
     async def _build_context(
         self, run: ActiveRun, request_reserve_tokens: int = 0
     ) -> dict[str, str]:
+        context_started = asyncio.get_running_loop().time()
         interpretation = run.interpretation
         assert interpretation is not None
         direct_ids = list(interpretation.referenced_message_ids)
@@ -791,6 +989,36 @@ class AgentService:
             update={"referenced_message_ids": list(dict.fromkeys(direct_ids))}
         )
         run.interpretation = interpretation
+        if interpretation.recall_scope in {"general", "all"}:
+            items = await self.memory.repository.items(run.turn.scope)
+            predicates = [
+                item["predicate"]
+                for item in items
+                if interpretation.recall_scope == "all"
+                or item["predicate"]
+                in {
+                    "preferred_name",
+                    "name",
+                    "home_city",
+                    "city",
+                    "occupation",
+                    "children_count",
+                    "has_children",
+                    "has_pet",
+                    "pet_name",
+                    "pet_age",
+                    "age_years",
+                    "breed",
+                }
+            ]
+            interpretation = interpretation.model_copy(
+                update={
+                    "retrieval_predicates": list(
+                        dict.fromkeys(interpretation.retrieval_predicates + predicates)
+                    )
+                }
+            )
+            run.interpretation = interpretation
         view = await self.memory.retrieve(
             run.turn.scope,
             interpretation.retrieval_predicates,
@@ -799,16 +1027,33 @@ class AgentService:
             interpretation.history_query,
             direct_ids,
         )
+        selection_started = asyncio.get_running_loop().time()
+        run.rule_bundle = self.rule_selector.select(
+            interpretation,
+            {
+                "followup": run.followup is not None,
+                "followup_enabled": self.settings.followup_enabled,
+                "commerce": self.commerce.settings.preview_enabled,
+            },
+        )
+        run.selection_seconds += asyncio.get_running_loop().time() - selection_started
+        if run.context_reference_time is None:
+            run.context_reference_time = self.clock.now()
         run.context = await self.builder.build(
             run.turn,
             interpretation,
             run.conversation,
             view,
             request_reserve_tokens=request_reserve_tokens,
+            policy_selection={
+                "version": run.rule_bundle.version,
+                "ids": list(run.rule_bundle.ids),
+            },
+            reference_time=run.context_reference_time,
         )
-        run.context.data["APPLICATION_STATE"]["followup_enabled"] = (
-            self.settings.followup_enabled and run.followup is None
-        )
+        run.context.data["APPLICATION_STATE"][
+            "followup_enabled"
+        ] = self.settings.followup_enabled
         if self.commerce.settings.preview_enabled:
             run.context.data["ALLOWED_ACTIONS"] = ["none"]
         if run.followup is not None:
@@ -836,7 +1081,12 @@ class AgentService:
             or run.context.data["PLATFORM_TRANSITION"]["required"]
         ):
             run.context.data["DIALOGUE_PLAN"]["requires_continuation"] = False
+        if run.recovering:
+            self._configure_recovery_plan(run)
+        run.context.manifest.policy = run.rule_bundle.as_data()
         for section in (
+            "POLICY_SELECTION",
+            "STYLE_EXAMPLES",
             "APPLICATION_STATE",
             "DIALOGUE_PLAN",
             "TRIGGER",
@@ -847,6 +1097,7 @@ class AgentService:
                 run.context.manifest.token_count_by_section[section] = (
                     self.builder.counter.count(run.context.data[section])
                 )
+        run.context_seconds += asyncio.get_running_loop().time() - context_started
         return {"phase": "context_ready"}
 
     async def _generate(self, state: GraphState) -> dict[str, str]:
@@ -881,28 +1132,6 @@ class AgentService:
             run.context.data["DIALOGUE_PLAN"]["requires_continuation"] = False
             run.validation_events.append({"stage": stage + "_photo_refusal"})
             return []
-        if (
-            run.followup is None
-            and run.proposal.continuation is not None
-            and run.proposal.question_goal is None
-            and "?" not in run.proposal.full_reply
-            and any(
-                not message.metadata.get("forwarded")
-                and is_contact_request(message.text)
-                for message in run.turn.messages
-            )
-        ):
-            run.proposal = run.proposal.model_copy(
-                update={
-                    "reply": run.proposal.reply.rstrip(". ")
-                    + ". "
-                    + run.proposal.continuation,
-                    "continuation": None,
-                    "question_part": None,
-                    "followup_allowed": False,
-                }
-            )
-            run.context.data["DIALOGUE_PLAN"]["requires_continuation"] = False
         if run.interpretation.dialogue_mode != "closing":
             user_text = " ".join(message.text for message in run.turn.messages)
             for field_name in ("reply", "continuation"):
@@ -922,25 +1151,32 @@ class AgentService:
                     run.validation_events.append(
                         {"stage": stage + "_day_wording", "part": field_name}
                     )
-        run.proposal = run.proposal.model_copy(
-            update={
-                "reply": strip_terminal_period(run.proposal.reply),
-                "continuation": (
-                    strip_terminal_period(run.proposal.continuation)
-                    if run.proposal.continuation is not None
-                    else None
-                ),
-            }
-        )
+        for field_name in ("reply", "continuation"):
+            part = getattr(run.proposal, field_name)
+            if part is None:
+                continue
+            normalized = strip_terminal_period(
+                part.translate(str.maketrans("—–", "--"))
+            )
+            if normalized != part:
+                run.proposal = run.proposal.model_copy(update={field_name: normalized})
+                run.validation_events.append(
+                    {"stage": stage + "_typography_normalized", "part": field_name}
+                )
         transition = run.context.data.get("PLATFORM_TRANSITION", {})
         if transition.get("eligible") and (
             run.proposal.platform_transition or transition.get("required")
         ):
+            if run.proposal.followup_allowed:
+                run.validation_events.append(
+                    {"stage": stage + "_invitation_followup_disabled"}
+                )
             run.proposal = run.proposal.model_copy(
                 update={
                     "platform_transition": True,
                     "requested_action": "none",
                     "dialogue_act": "platform_redirect",
+                    "followup_allowed": False,
                 }
             )
         if run.proposal.question_goal:
@@ -953,19 +1189,92 @@ class AgentService:
             run.context.data["AGENDA"].extend(
                 item for item in stored if item["id"] not in existing
             )
+        if (
+            run.proposal.casual_imperfection_used
+            or run.proposal.casual_imperfection is not None
+        ) and not supported_imperfection(
+            run.proposal.casual_imperfection, run.proposal.full_reply
+        ):
+            run.validation_events.append(
+                {
+                    "stage": stage + "_style_metadata",
+                    "reason": "UNSUPPORTED_IMPERFECTION",
+                }
+            )
+            run.proposal = run.proposal.model_copy(
+                update={"casual_imperfection_used": False, "casual_imperfection": None}
+            )
+        protected = self._protected_style_texts(run)
+        if run.context.data["STYLE_PLAN"]["request_imperfection"]:
+            relaxed = apply_casual_imperfection(run.proposal, protected)
+            if relaxed is not run.proposal:
+                assert relaxed.casual_imperfection is not None
+                run.validation_events.append(
+                    {
+                        "stage": stage + "_casual_imperfection_applied",
+                        **relaxed.casual_imperfection.model_dump(),
+                    }
+                )
+                run.proposal = relaxed
+        known_memory = set(run.context.manifest.memory_ids)
+        known_sources = {message["id"] for message in run.context.manifest.messages}
+        memory_ids = [
+            identifier
+            for identifier in run.proposal.used_memory_ids
+            if identifier in known_memory
+        ]
+        source_ids = [
+            identifier
+            for identifier in run.proposal.used_source_message_ids
+            if identifier in known_sources
+        ]
+        if (memory_ids or source_ids) and (
+            memory_ids != run.proposal.used_memory_ids
+            or source_ids != run.proposal.used_source_message_ids
+        ):
+            run.validation_events.append(
+                {
+                    "stage": stage + "_reference_metadata_normalized",
+                    "discarded_memory_ids": len(run.proposal.used_memory_ids)
+                    - len(memory_ids),
+                    "discarded_source_ids": len(run.proposal.used_source_message_ids)
+                    - len(source_ids),
+                }
+            )
+            run.proposal = run.proposal.model_copy(
+                update={
+                    "used_memory_ids": memory_ids,
+                    "used_source_message_ids": source_ids,
+                }
+            )
         errors = validate_reply(run.proposal, run.context)
         run.validation_events.append({"stage": stage + "_static", "errors": errors})
         if not errors:
+            checked_proposal = semantic_reply(run.proposal, protected)
             verdict = await self._call(
                 run,
                 task,
-                VALIDATOR_RULES
-                + (FOLLOWUP_VALIDATOR_RULES if run.followup is not None else ""),
-                {"reply": run.proposal.model_dump(), "context": run.context.data},
+                (
+                    FOLLOWUP_VALIDATOR_RULES
+                    if run.followup is not None
+                    else VALIDATOR_RULES
+                ),
+                {
+                    "reply": checked_proposal.model_dump(
+                        exclude=(
+                            {"followup_allowed"} if run.followup is not None else set()
+                        )
+                    ),
+                    "context": run.context.data,
+                },
                 SemanticVerdict,
             )
             run.validation_events.append(
-                {"stage": stage + "_semantic", **verdict.model_dump()}
+                {
+                    "stage": stage + "_semantic",
+                    "normalized_imperfection": checked_proposal is not run.proposal,
+                    **verdict.model_dump(),
+                }
             )
             if verdict.decision != "accept":
                 errors = verdict.reason_codes or ["SEMANTIC_REJECTION"]
@@ -973,10 +1282,10 @@ class AgentService:
 
     def _reply_schema(self, run: ActiveRun) -> type[ReplyProposal]:
         assert run.context is not None
-        if run.recovering:
-            return RecoveryReplyProposal
         if run.followup is not None:
             return FollowupProposal
+        if run.recovering:
+            return RecoveryReplyProposal
         return (
             ContinuingReplyProposal
             if run.context.data["DIALOGUE_PLAN"]["requires_continuation"]
@@ -986,8 +1295,6 @@ class AgentService:
     async def _validate(self, state: GraphState) -> dict[str, str]:
         run = self.active[state["run_id"]]
         assert run.context and run.proposal
-        if isinstance(run.proposal, FollowupProposal) and not run.proposal.should_send:
-            return {"phase": "skipped"}
         errors = await self._check_proposal(run, "draft", "validate")
         if errors:
             run.proposal = await self._call(
@@ -1004,11 +1311,6 @@ class AgentService:
                 },
                 self._reply_schema(run),
             )
-            if (
-                isinstance(run.proposal, FollowupProposal)
-                and not run.proposal.should_send
-            ):
-                return {"phase": "skipped"}
             errors = await self._check_proposal(run, "repair", "validate_repair")
             if errors:
                 raise ReplyRejectedError("Repair rejected: " + ",".join(errors))
@@ -1023,20 +1325,23 @@ class AgentService:
         async with asyncio.timeout(remaining):
             run.conversation = await self.conversation_service.current(run.turn)
             if run.context is None:
-                run.interpretation = TurnInterpretation(
-                    intent="clarify_current_input",
-                    dialogue_mode="clarification",
-                    language=self._input_language(run),
-                    needs_clarification=True,
-                )
+                if run.interpretation is None:
+                    run.interpretation = TurnInterpretation(
+                        intent="clarify_current_input",
+                        dialogue_mode="clarification",
+                        language=self._input_language(run),
+                        needs_clarification=True,
+                    )
                 await self._build_context(run)
             assert run.context is not None
+            self._configure_recovery_plan(run)
             run.proposal = await self._call(
                 run,
                 "recover",
                 GENERATOR_RULES
                 + PLATFORM_TRANSITION_RULES
-                + "\nRECOVERY: Answer the actual current input using the supplied originals and active boundaries. Correct the concrete rejected claim while preserving supported content, Marko's personality and the intended conversational move. A relevant question, continuation and followup_allowed=true remain valid in an open conversation; a previous failed draft is not a user request for silence. requested_action=none. Do not repeat the failed claim, invent facts, claim rejected memory was stored, or add a service-error apology. If evidence is insufficient, ask one useful clarification when allowed. The current platform contract still applies. This candidate will be independently checked.",
+                + RECOVERY_RULES
+                + (FOLLOWUP_RULES if run.followup is not None else ""),
                 {
                     **run.context.data,
                     "RECOVERY_FAILURE": failure_code(error),
@@ -1056,8 +1361,18 @@ class AgentService:
                 self._reply_schema(run),
             )
             errors = await self._check_proposal(run, "recovery", "validate_recovery")
+            if errors and self._remove_rejected_continuation(run, errors):
+                errors = await self._check_proposal(
+                    run, "recovery_answer", "validate_recovery"
+                )
             if errors:
                 raise ReplyRejectedError("Recovery rejected: " + ",".join(errors))
+            if (
+                isinstance(run.proposal, FollowupProposal)
+                and not run.proposal.should_send
+            ):
+                run.validation_events.append({"stage": "followup_recovery_declined"})
+                return
             await self._prepare(
                 {
                     "run_id": identifier,
@@ -1069,6 +1384,86 @@ class AgentService:
             )
             run.validation_events.append({"stage": "recovered"})
 
+    def _remove_rejected_continuation(self, run: ActiveRun, errors: list[str]) -> bool:
+        assert run.proposal is not None
+        if (
+            run.followup is not None
+            or run.proposal.continuation is None
+            or run.calls >= self.settings.llm_max_calls
+        ):
+            return False
+        verdict = run.validation_events[-1]
+        quote = verdict.get("violating_text")
+        rejected_question = (
+            verdict.get("stage") == "recovery_static"
+            and bool(errors)
+            and set(errors)
+            <= {
+                "ALREADY_ANSWERED",
+                "REPEATED_QUESTION",
+                "QUESTION_NOT_ALLOWED",
+                "INTERRUPTED_QUESTION_REPLACED",
+                "SITE_INTERVIEW_QUESTION",
+            }
+            and run.proposal.question_part == "continuation"
+        )
+        checked_proposal = (
+            semantic_reply(run.proposal)
+            if verdict.get("normalized_imperfection")
+            else run.proposal
+        )
+        rejected_continuation = (
+            bool(errors)
+            and set(errors) <= {"CONVERSATION.REPETITION", "UNRELATED_QUESTION"}
+            and verdict.get("stage") == "recovery_semantic"
+            and isinstance(quote, str)
+            and bool(quote.strip())
+            and checked_proposal.continuation is not None
+            and quote in checked_proposal.continuation
+            and quote not in checked_proposal.reply
+        )
+        if not (rejected_question or rejected_continuation):
+            return False
+        changes: dict[str, Any] = {"continuation": None}
+        if run.proposal.question_part != "reply":
+            changes.update(
+                question_goal=None, question_part=None, question_thread_id=None
+            )
+        if (
+            run.proposal.casual_imperfection is not None
+            and run.proposal.casual_imperfection.written not in run.proposal.reply
+        ):
+            changes.update(casual_imperfection=None, casual_imperfection_used=False)
+        run.proposal = run.proposal.model_copy(update=changes)
+        assert run.context is not None
+        run.context.data["DIALOGUE_PLAN"].update(
+            initiative_due=False,
+            requires_continuation=False,
+            strategy="respond_in_context",
+        )
+        run.validation_events.append({"stage": "recovery_continuation_removed"})
+        return True
+
+    def _configure_recovery_plan(self, run: ActiveRun) -> None:
+        assert run.context is not None
+        plan = run.context.data["DIALOGUE_PLAN"]
+        plan["requires_continuation"] = False
+        if run.followup is None:
+            transition = run.context.data.get("PLATFORM_TRANSITION", {})
+            run.recovery_invitation_pending = run.recovery_invitation_pending or bool(
+                transition.get("eligible")
+                and (
+                    transition.get("required")
+                    or run.proposal is not None
+                    and run.proposal.platform_transition
+                )
+            )
+            run.context.data["PLATFORM_TRANSITION"] = {
+                "eligible": False,
+                "required": False,
+                "server_invitation_pending": run.recovery_invitation_pending,
+            }
+
     def _reply_delays(
         self,
         run: ActiveRun,
@@ -1076,18 +1471,98 @@ class AgentService:
         conversation: Conversation,
         now: float,
     ) -> tuple[float, ...]:
-        return response_delays(
+        delays = response_delays(
             parts,
             run.response_received_at if run.response_received_at is not None else now,
             now,
             conversation.first_reply_at is None and run.followup is None,
             self.settings,
         )
+        run.pacing_seconds = delays
+        return delays
+
+    def _protected_style_texts(self, run: ActiveRun) -> list[str]:
+        assert run.interpretation is not None and run.context is not None
+        return [
+            entity.name for entity in run.interpretation.entities if entity.name
+        ] + [
+            str(fact["value"])
+            for fact in run.context.data.get("MEMORY_DATA", {}).get("facts", [])
+            if fact.get("value") is not None
+        ]
+
+    def _delivery_parts(self, run: ActiveRun) -> tuple[ReplyProposal, ...]:
+        assert run.proposal is not None and run.context is not None
+        proposal = run.proposal
+        plan = run.context.data["STYLE_PLAN"]
+        protected = self._protected_style_texts(run)
+        dialogue = run.context.data["DIALOGUE_PLAN"]
+        split_sentences = bool(
+            run.followup is None
+            and run.interpretation is not None
+            and run.interpretation.dialogue_mode != "closing"
+            and run.interpretation.recall_scope == "none"
+            and not run.interpretation.detail_requested
+            and not proposal.platform_transition
+            and proposal.requested_action == "none"
+            and dialogue["max_messages"] > 1
+        )
+        parts = []
+        for index, part in enumerate(
+            delivery_parts(proposal, split_sentences, protected)
+        ):
+            text = part.reply
+            if (
+                part.casual_imperfection is None
+                and plan["request_imperfection"]
+                and plan["target_message_interval"] == 1
+                and not proposal.platform_transition
+                and proposal.requested_action == "none"
+            ):
+                styled = apply_casual_imperfection(part, protected)
+                if (
+                    styled is not part
+                    and styled.casual_imperfection is not None
+                    and semantic_reply(styled, protected).reply == text
+                ):
+                    part = styled
+                    run.validation_events.append(
+                        {
+                            "stage": "delivery_part_style",
+                            "part": index,
+                            "edit": styled.casual_imperfection.model_dump(),
+                        }
+                    )
+            parts.append(reduce_letter_imperfections(part))
+        return tuple(parts)
 
     async def _prepare(self, state: GraphState) -> dict[str, str]:
         run = self.active[state["run_id"]]
         assert run.proposal and run.context
         proposal = run.proposal
+        followup_allowed, followup_reason = followup_eligibility(
+            proposal, run.context.data
+        )
+        if self._standalone_photo_request(run):
+            followup_allowed, followup_reason = False, "STANDALONE_PHOTO_BOUNDARY"
+        run.validation_events.append(
+            {
+                "stage": "followup_eligibility",
+                "model_allowed": proposal.followup_allowed,
+                "allowed": followup_allowed,
+                "reason": followup_reason,
+                "dialogue_mode": run.context.data["APPLICATION_STATE"]["dialogue_mode"],
+            }
+        )
+        proposal = proposal.model_copy(update={"followup_allowed": followup_allowed})
+        run.proposal = proposal
+        style_plan = {
+            key: value
+            for key, value in run.context.data["STYLE_PLAN"].items()
+            if key != "visible_forms"
+        }
+        resume_question = run.context.data["DIALOGUE_PLAN"].get("resume_question")
+        response_language = run.context.data["APPLICATION_STATE"]["language"]
         conversation = await self.conversation_service.current(run.turn)
         if (
             conversation.snapshot.control_revision
@@ -1096,10 +1571,11 @@ class AgentService:
         ):
             raise StaleStateError("Reply snapshot changed")
         kind = "offer" if run.proposal.requested_action == "show_offer" else "reply"
+        styled_parts = self._delivery_parts(run)
         parts = (
             (await self.commerce.offer_text(conversation.language),)
             if kind == "offer"
-            else proposal.parts
+            else tuple(part.reply for part in styled_parts)
         )
 
         async def prepare(tx: Transaction) -> None:
@@ -1112,6 +1588,13 @@ class AgentService:
             remaining = run.deadline - asyncio.get_running_loop().time()
             if remaining <= 0:
                 raise TimeoutError("Turn deadline expired before outbox commit")
+            turn_state = await fetchone(
+                tx, "SELECT status FROM turns WHERE id=?", (run.turn.id,)
+            )
+            if run.followup is None and (
+                turn_state is None or turn_state["status"] != "running"
+            ):
+                raise StaleStateError("Turn no longer preparing")
             now = self.clock.now()
             inflight = await fetchone(
                 tx,
@@ -1119,40 +1602,63 @@ class AgentService:
                 (current.id, current.epoch),
             )
             assert inflight is not None
-            limit_required = (
+            allowed = (
                 self.commerce.settings.preview_enabled
                 and run.followup is None
+                and not self.commerce.preview_closed(current)
+                and current.preview_reply_count
+                >= self.commerce.settings.preview_min_replies
+                and await self.commerce.repository.transition_allowed(tx, current.scope)
+            )
+            limit_required = (
+                allowed
                 and current.preview_reply_count + inflight["n"]
                 >= self.commerce.settings.preview_max_replies - 1
             )
-            if proposal.platform_transition or limit_required:
-                allowed = (
-                    self.commerce.settings.preview_enabled
-                    and current.preview_reply_count
-                    >= self.commerce.settings.preview_min_replies
-                    and await self.commerce.repository.transition_allowed(
-                        tx, current.scope
-                    )
-                )
-                if proposal.platform_transition and not allowed and not limit_required:
+            if (
+                proposal.platform_transition
+                or limit_required
+                or allowed
+                and run.recovery_invitation_pending
+            ):
+                if not allowed:
                     raise StaleStateError("Platform transition is not allowed")
-                text = (
-                    self.commerce.transition_text(
-                        current.language, proposal.full_reply, proposal.platform_notice
-                    )
-                    if allowed
-                    else self.commerce.farewell_text(
-                        current.language, proposal.full_reply, proposal.platform_notice
-                    )
+                text = self.commerce.transition_text(
+                    response_language, notice=proposal.platform_notice
                 )
-                origin = "platform_redirect" if allowed else "preview_closing"
-                delay = self._reply_delays(run, (text,), current, now)[0]
+                delays = self._reply_delays(
+                    run, (proposal.full_reply, text), current, now
+                )
+                deadline = now + sum(delays) + 30
                 await self.commerce.repository.close_preview(
                     tx, current.scope, self.clock.now()
                 )
                 await self.delivery.cancel_pending(tx, current.scope, "PREVIEW_CLOSED")
                 if self.on_preview_closed is not None:
                     await self.on_preview_closed(tx, current.scope)
+                answer_id = await self.delivery.prepare(
+                    tx,
+                    current.snapshot,
+                    OutboxDraft(
+                        action_key=f"turn:{run.turn.id}",
+                        kind="reply",
+                        text=proposal.full_reply,
+                        deadline=deadline,
+                        delay_seconds=delays[0],
+                    ),
+                    now,
+                    {
+                        **proposal.model_dump(
+                            exclude={"continuation", "question_part"}
+                        ),
+                        "origin": "platform_answer",
+                        "reply": proposal.full_reply,
+                        "followup_allowed": False,
+                        "style_plan": style_plan,
+                        "response_language": response_language,
+                    },
+                    run.turn.id,
+                )
                 await self.delivery.prepare(
                     tx,
                     current.snapshot,
@@ -1160,12 +1666,13 @@ class AgentService:
                         action_key=f"platform-preview:{current.id}:{current.epoch}",
                         kind="service",
                         text=text,
-                        deadline=now + delay + 30,
-                        delay_seconds=delay,
+                        deadline=deadline,
+                        predecessor_id=answer_id,
+                        delay_seconds=delays[1],
                     ),
                     self.clock.now(),
                     {
-                        "origin": origin,
+                        "origin": "platform_redirect",
                         "transition_trigger": "limit" if limit_required else "agent",
                         "completed_replies": current.preview_reply_count,
                         "dialogue_act": "platform_redirect",
@@ -1174,6 +1681,7 @@ class AgentService:
                         "used_memory_ids": proposal.used_memory_ids,
                         "used_source_message_ids": proposal.used_source_message_ids,
                         "followup_allowed": False,
+                        "response_language": response_language,
                     },
                     run.turn.id,
                 )
@@ -1189,7 +1697,7 @@ class AgentService:
             for index, text in enumerate(parts):
                 metadata: dict[str, Any] = (
                     {
-                        **proposal.model_dump(
+                        **styled_parts[index].model_dump(
                             exclude={"continuation", "question_part"}
                         ),
                         "reply": text,
@@ -1197,9 +1705,11 @@ class AgentService:
                     if kind != "offer"
                     else {"dialogue_act": "show_offer"}
                 )
-                if index != proposal.question_part_index:
-                    metadata["question_goal"] = None
-                if len(parts) == 2 and not metadata.get("question_goal"):
+                if resume_question and run.followup is None:
+                    metadata["resume_question_thread_id"] = resume_question["thread_id"]
+                metadata["style_plan"] = style_plan
+                metadata["response_language"] = response_language
+                if len(parts) > 1 and not metadata.get("question_goal"):
                     metadata["dialogue_act"] = "reaction"
                 if run.followup is not None:
                     metadata["origin"] = "followup"
@@ -1213,7 +1723,11 @@ class AgentService:
                             if run.followup is not None
                             else f"turn:{run.turn.id}"
                         )
-                        + (":continuation" if index else ""),
+                        + (
+                            f":continuation:{index}"
+                            if index > 1
+                            else ":continuation" if index else ""
+                        ),
                         kind=kind,
                         text=text,
                         deadline=deadline,
@@ -1301,10 +1815,11 @@ class AgentService:
                 )
                 if text is None:
                     await self.conversations.finish_turn(
-                        tx, run.turn, "skipped" if final_attempt else "deferred"
+                        tx, run.turn, "unanswered" if final_attempt else "deferred"
                     )
                     return False
                 now = self.clock.now()
+                delay = self._reply_delays(run, (text,), current, now)[0]
                 await self.delivery.prepare(
                     tx,
                     current.snapshot,
@@ -1312,9 +1827,10 @@ class AgentService:
                         action_key=f"fallback:{run.turn.id}",
                         kind="reply" if photo_requested else "service",
                         text=text,
-                        deadline=now + 30,
+                        deadline=now + delay + 30,
+                        delay_seconds=delay,
                     ),
-                    self.clock.now(),
+                    now,
                     (
                         {
                             "reply": text,

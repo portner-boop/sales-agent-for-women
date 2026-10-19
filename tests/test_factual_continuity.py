@@ -63,7 +63,7 @@ async def test_open_factual_answer_keeps_validated_continuation_and_timer(
     await receive(app, app.sender, 1, text, 1, app.clock.now())
     assert app.sender.sent == [(1, answer), (1, continuation)]
     request = next(data for task, data in app.model.calls if task == "generate")
-    assert request["DIALOGUE_PLAN"]["requires_continuation"]
+    assert not request["DIALOGUE_PLAN"]["requires_continuation"]
     verdict_input = next(data for task, data in app.model.calls if task == "validate")
     assert verdict_input["reply"]["continuation"] == continuation
     assert (
@@ -73,7 +73,7 @@ async def test_open_factual_answer_keeps_validated_continuation_and_timer(
 
 @pytest.mark.parametrize(
     "mode,continue_conversation",
-    [("continuation", False), ("closing", True), ("service", True)],
+    [("continuation", False), ("closing", True), ("service", False)],
 )
 async def test_factual_continuation_respects_closed_or_answer_only_turns(
     app: Application, mode: str, continue_conversation: bool
@@ -145,5 +145,5 @@ async def test_repair_removes_invented_teasing_and_preserves_next_thought(
     ]
     assert all("tease" not in text for _, text in app.sender.sent)
     request = next(data for task, data in app.model.calls if task == "repair")
-    assert request["DIALOGUE_PLAN"]["requires_continuation"]
+    assert not request["DIALOGUE_PLAN"]["requires_continuation"]
     assert "UNSUPPORTED_FACT" in request["REPAIR_REASON_CODES"]

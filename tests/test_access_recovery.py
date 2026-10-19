@@ -49,7 +49,7 @@ async def test_removed_command_only_shows_four_commands(app: Application) -> Non
     assert await scalar(app, "SELECT COUNT(*) FROM purchases") == 0
 
 
-async def test_retry_of_skipped_input_preserves_original_and_gets_fresh_deadline(
+async def test_retry_of_old_input_preserves_original_but_not_deadline(
     app: Application,
 ) -> None:
     await app.telegram.ingest([update(1, "hello", user=3)])
@@ -95,10 +95,10 @@ async def test_retry_of_skipped_input_preserves_original_and_gets_fresh_deadline
     assert current.version == original.version
     assert current.text == original.text
     assert (
-        await scalar(app, "SELECT COUNT(*) FROM agent_runs WHERE status='fallback'")
-        == 0
+        await scalar(app, "SELECT COUNT(*) FROM agent_runs WHERE status='unanswered'")
+        == 1
     )
     assert (
         await scalar(app, "SELECT COUNT(*) FROM said_ledger WHERE action_kind='reply'")
-        == 2
+        == 1
     )

@@ -10,10 +10,10 @@ from aiogram.exceptions import (
     TelegramServerError,
 )
 from aiogram.types import BotCommand
-from aiogram.utils.chat_action import ChatActionSender
 
 from app.modules.delivery.entities import SendResult
 from app.modules.telegram.service import TelegramService
+from app.modules.telegram.typing import TelegramTyping
 
 logger = logging.getLogger(__name__)
 
@@ -48,8 +48,8 @@ class TelegramSender:
         except (TelegramNetworkError, TelegramServerError, TimeoutError):
             return SendResult("delivery_unknown", error_code="TELEGRAM_RESULT_UNKNOWN")
 
-    def typing(self, chat_id: int) -> ChatActionSender:
-        return ChatActionSender.typing(chat_id, self.bot)
+    def typing(self, chat_id: int) -> TelegramTyping:
+        return TelegramTyping(self.bot, chat_id)
 
 
 class DurablePoller:
@@ -59,18 +59,25 @@ class DurablePoller:
         self.poll_timeout = poll_timeout
 
     async def run(self) -> None:
-        webhook = await self.bot.get_webhook_info()
-        if webhook.url:
-            raise RuntimeError(
-                "A webhook is configured; remove it before polling without dropping pending updates"
-            )
+        webhook_checked = False
+        failures = 0
         while True:
             offset = await self.ingress.repository.offset()
+            phase = "updates" if webhook_checked else "webhook"
             try:
+                if not webhook_checked:
+                    webhook = await self.bot.get_webhook_info(request_timeout=10)
+                    if webhook.url:
+                        raise RuntimeError(
+                            "A webhook is configured; remove it before polling without dropping pending updates"
+                        )
+                    webhook_checked = True
+                    phase = "updates"
                 updates = await self.bot.get_updates(
                     offset=offset,
                     timeout=self.poll_timeout,
                     allowed_updates=["message", "edited_message", "my_chat_member"],
+                    request_timeout=self.poll_timeout + 10,
                 )
                 if updates:
                     await self.ingress.ingest(
@@ -81,6 +88,22 @@ class DurablePoller:
                             for update in updates
                         ]
                     )
-            except (TelegramNetworkError, TelegramServerError):
-                logger.warning("poller_transient_error offset=%s", offset)
-                await asyncio.sleep(1)
+                failures = 0
+            except (
+                TelegramNetworkError,
+                TelegramServerError,
+                TelegramRetryAfter,
+                TimeoutError,
+            ) as error:
+                delay = min(30, 2 ** min(failures, 5))
+                if isinstance(error, TelegramRetryAfter):
+                    delay = max(delay, error.retry_after)
+                failures += 1
+                logger.warning(
+                    "poller_transient_error phase=%s offset=%s type=%s retry_after=%s",
+                    phase,
+                    offset,
+                    type(error).__name__,
+                    delay,
+                )
+                await asyncio.sleep(delay)

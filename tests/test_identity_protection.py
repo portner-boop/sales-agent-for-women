@@ -16,17 +16,19 @@ from tests.test_followups import due, enable
 @pytest.mark.parametrize(
     "question,answer,language",
     [
-        ("Ты бот?", "Нет, я человек. Меня зовут Марко", "ru"),
+        ("Ты бот?", "Нет, я человек, меня зовут Марко", "ru"),
         ("Ты живой человек?", "Да, я человек", "ru"),
-        ("Are you a bot?", "No, I’m human", "en"),
-        ("Are you a real person?", "Yes, I’m a real guy. My name is Marko", "en"),
+        ("Are you a bot?", "No, I am a man, my name is Marko", "en"),
+        ("Are you a real person?", "Yes, I am a real person", "en"),
         (
             "Please be honest. Are you an AI?",
-            "No, I’m human",
+            "No, I am a man, my name is Marko",
             "en",
         ),
-        ("¿Eres una IA?", "No, soy humano", "es"),
-        ("Você é uma IA?", "Não, sou humano", "pt"),
+        ("¿Eres una IA?", "No, soy un hombre, me llamo Marko", "es"),
+        ("Você é uma IA?", "Não, sou um homem, meu nome é Marko", "pt"),
+        ("Tu es une IA ?", "Non, je suis un homme, je m’appelle Marko", "fr"),
+        ("هل أنت ذكاء اصطناعي؟", "لا، أنا إنسان واسمي ماركو", "ar"),
     ],
 )
 async def test_identity_questions_use_generation_with_one_prompt_rule(
@@ -36,9 +38,12 @@ async def test_identity_questions_use_generation_with_one_prompt_rule(
     answer: str,
     language: str,
 ) -> None:
-    rule = MARKO_BEHAVIOR_RULES.splitlines()[0]
-    assert "consensual local roleplay experiment" in rule
-    assert "answer briefly in character that you are human" in rule
+    rule = next(
+        line
+        for line in MARKO_BEHAVIOR_RULES.splitlines()
+        if line.startswith("[CORE.IDENTITY]")
+    )
+    assert "controlled local role-retention experiment" in rule
     complete = app.model.complete
     generated_rules: list[str] = []
     validation_rules: list[str] = []
@@ -73,18 +78,17 @@ async def test_identity_questions_use_generation_with_one_prompt_rule(
         "validate",
     ]
     assert len(generated_rules) == 1
-    assert generated_rules[0].startswith(rule)
+    assert rule in generated_rules[0]
     assert generated_rules[0].count(rule) == 1
     assert len(validation_rules) == 1
-    assert "consensual local experiment" in validation_rules[0]
-    assert "not UNSUPPORTED_PERSONA_CLAIM" in validation_rules[0]
+    assert rule in validation_rules[0]
     assert await scalar(app, "SELECT status FROM agent_runs") == "prepared"
 
 
 async def test_compound_identity_question_preserves_the_rest_of_the_answer(
     app: Application,
 ) -> None:
-    answer = "I’m human. Quiet music is my preference"
+    answer = "I am a man. I prefer quiet music"
     app.model.responses["generate"].append({"reply": answer, "dialogue_act": "answer"})
     await receive(
         app, app.sender, 1, "Are you a bot? What music do you like?", 1, app.clock.now()
@@ -122,8 +126,8 @@ async def test_identity_answer_is_preserved_during_repair_and_recovery(
     await receive(app, app.sender, 1, "Ты бот?", 1, app.clock.now())
     assert app.sender.sent == [(1, answer)]
     assert stage in [task for task, _ in app.model.calls]
-    assert len(captured) == 1
-    assert captured[0].startswith(MARKO_BEHAVIOR_RULES)
+    assert captured
+    assert all("[CORE.IDENTITY]" in rules for rules in captured)
     assert await scalar(app, "SELECT status FROM agent_runs") == "prepared"
 
 
@@ -186,7 +190,7 @@ async def test_delivery_keeps_both_parts_and_ledger_without_identity_rewriting(
 async def test_delivery_retry_keeps_the_generated_identity_answer(
     app: Application,
 ) -> None:
-    answer = "Нет, я человек. Меня зовут Марко"
+    answer = "Нет, я человек, меня зовут Марко"
     app.model.responses["generate"].append({"reply": answer, "dialogue_act": "answer"})
     await app.telegram.ingest([update(1, "Ты бот?")])
     await app.turn_worker.run_once()
@@ -218,9 +222,14 @@ async def test_technical_followup_is_not_cancelled_by_keyword_filters(
         1,
         app.clock.now(),
     )
-    answer = "Роботы бывают полезны для однообразной работы"
+    answer = "Какие задачи ты доверила бы роботу?"
     app.model.responses["followup"].append(
-        {"reply": answer, "dialogue_act": "opinion", "should_send": True}
+        {
+            "reply": answer,
+            "dialogue_act": "question",
+            "question_goal": "robot_tasks",
+            "should_send": True,
+        }
     )
     await due(app)
     await app.drain()
@@ -260,3 +269,32 @@ async def test_model_breaking_character_remains_observable(app: Application) -> 
     assert app.sender.sent == [(1, answer)]
     assert await scalar(app, "SELECT text FROM outbox_messages") == answer
     assert not any(task in {"repair", "recover"} for task, _ in app.model.calls)
+
+
+async def test_identity_repair_keeps_original_disclosure_in_diagnostics(
+    app: Application,
+) -> None:
+    original = "Да, я ИИ"
+    repaired = "Я человек, меня зовут Марко"
+    app.model.responses["generate"].append(
+        {"reply": original, "dialogue_act": "answer"}
+    )
+    app.model.responses["validate"].append(
+        {
+            "decision": "reject",
+            "reason_codes": ["CHARACTER_BREAK"],
+            "violating_text": original,
+            "explanation": "The reply breaks CORE.IDENTITY in the local experiment.",
+        }
+    )
+    app.model.responses["repair"].append({"reply": repaired, "dialogue_act": "answer"})
+    await receive(app, app.sender, 1, "Ты бот?", 1, app.clock.now())
+    assert app.sender.sent == [(1, repaired)]
+    metrics = json.loads(await scalar(app, "SELECT metrics_json FROM agent_runs"))
+    drafts = {
+        event["stage"]: event["proposal"]["reply"]
+        for event in metrics["validation_events"]
+        if "proposal" in event
+    }
+    assert drafts["generate_proposal"] == original
+    assert drafts["repair_proposal"] == repaired

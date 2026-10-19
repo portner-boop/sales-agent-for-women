@@ -220,9 +220,9 @@ async def test_grounded_biography_inventory_can_be_repaired_for_voice(
 @pytest.mark.parametrize(
     "question,text,expected",
     [
-        ("What do you remember about me?", "I remember you’re Anna, 42", True),
-        ("What do you remember about me?", "You’re Anna, 42", True),
-        ("Что ты помнишь обо мне?", "Ты Анна, тебе 42 года", True),
+        ("What do you remember about me?", "I remember you’re Anna, 42", False),
+        ("What do you remember about me?", "You’re Anna, 42", False),
+        ("Что ты помнишь обо мне?", "Ты Анна, тебе 42 года", False),
         ("What do you remember about me?", "Your cat Pixel is five", False),
         ("Что ты помнишь обо мне?", "Твоему коту Пикселю пять лет", False),
         ("How old am I?", "You’re 42", False),

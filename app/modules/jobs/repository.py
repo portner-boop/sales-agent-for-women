@@ -3,7 +3,7 @@ from uuid import uuid4
 from app.modules.jobs.entities import Job
 from app.modules.jobs.schemas import JobPayload
 from app.shared.entities import ScopeContext
-from app.shared.storage import Database, Transaction, fetchone
+from app.shared.storage import Database, Transaction, fetchall, fetchone
 
 
 class JobRepository:
@@ -122,6 +122,37 @@ class JobRepository:
             )
 
         await self.database.write(recover)
+
+    async def reconcile_turns(self, now: float) -> None:
+        async def reconcile(tx: Transaction) -> None:
+            await tx.execute(
+                "UPDATE scheduled_jobs SET status='pending',lease_token=NULL,lease_until=NULL WHERE status='running' AND lease_until<?",
+                (now,),
+            )
+            rows = await fetchall(
+                tx,
+                "SELECT c.id,c.epoch,c.input_revision,MIN(v.received_at) received_at FROM conversations c JOIN messages m ON m.scope_id=c.id AND m.epoch=c.epoch JOIN message_versions v ON v.message_id=m.id AND v.version=m.current_version WHERE m.pending=1 AND c.control_state='enabled' GROUP BY c.id,c.epoch,c.input_revision",
+            )
+            for row in rows:
+                scope = ScopeContext(row["id"], row["epoch"])
+                active = await fetchone(
+                    tx,
+                    "SELECT 1 FROM scheduled_jobs WHERE scope_id=? AND epoch=? AND kind='turn' AND status IN ('pending','running')",
+                    (scope.scope_id, scope.epoch),
+                )
+                if active is None:
+                    key = f"turn:{scope.scope_id}:{scope.epoch}:{row['input_revision']}"
+                    existing = await fetchone(
+                        tx,
+                        "SELECT status FROM scheduled_jobs WHERE dedup_key=?",
+                        (key,),
+                    )
+                    if existing is None:
+                        await self.schedule(
+                            tx, "turn", key, row["received_at"], now, scope
+                        )
+
+        await self.database.write(reconcile)
 
     async def purge(self, tx: Transaction, scope_id: str) -> None:
         await tx.execute(

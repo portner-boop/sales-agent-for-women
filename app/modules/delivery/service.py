@@ -111,6 +111,7 @@ class DeliveryService:
         message = await self.repository.database.write(permit)
         if message is None:
             return
+        transport_started = asyncio.get_running_loop().time()
         try:
             async with asyncio.timeout(
                 min(10, max(0.01, message.deadline - self.clock.now()))
@@ -136,6 +137,10 @@ class DeliveryService:
                 result.external_message_id,
                 result.error_code,
                 result.retry_after,
+            )
+            await tx.execute(
+                "UPDATE outbox_messages SET proposal_json=json_set(proposal_json,'$.transport_seconds',?) WHERE id=?",
+                (asyncio.get_running_loop().time() - transport_started, message.id),
             )
             if result.status == "delivered":
                 if result.external_message_id is None:

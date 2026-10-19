@@ -135,7 +135,7 @@ async def test_rejected_recovery_never_leaks_unvalidated_draft(
     assert len(app.model.calls) == 7
 
 
-async def test_missing_continuation_is_retried_with_structure_feedback(
+async def test_complete_answer_does_not_retry_for_optional_continuation(
     app: Application,
 ) -> None:
     app.model.responses["generate"].extend(
@@ -152,10 +152,11 @@ async def test_missing_continuation_is_retried_with_structure_feedback(
     await app.drain()
     app.clock.advance(4)
     await app.drain()
-    assert app.sender.sent == [(1, "Нормально"), (1, "Тихие места мне нравятся")]
+    assert app.sender.sent == [(1, "Нормально")]
     requests = [data for name, data in app.model.calls if name == "generate"]
-    assert requests[1]["STRUCTURE_ERRORS"] == ["continuation:missing"]
-    assert (await metrics(app))["llm_retries"] == 1
+    assert len(requests) == 1
+    assert "STRUCTURE_ERRORS" not in requests[0]
+    assert (await metrics(app))["llm_retries"] == 0
 
 
 @pytest.mark.parametrize(
@@ -301,6 +302,9 @@ async def test_total_transport_retries_are_bounded(app: Application) -> None:
 async def test_repair_request_is_fitted_with_its_actual_payload(
     app: Application,
 ) -> None:
+    app.agent.builder.settings = app.settings.memory.model_copy(
+        update={"context_tokens": 12000}
+    )
     for number in range(1, 9):
         await app.telegram.ingest(
             [update(number, f"Story {number}. " + "flower " * 1000)]

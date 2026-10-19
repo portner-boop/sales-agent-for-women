@@ -39,9 +39,12 @@ class DeliveryRepository:
             )
             if (
                 predecessor is None
-                or predecessor["predecessor_id"] is not None
                 or predecessor["kind"] != "reply"
-                or draft.kind != "reply"
+                or not (
+                    draft.kind == "reply"
+                    or draft.kind == "service"
+                    and (proposal or {}).get("origin") == "platform_redirect"
+                )
                 or turn_id is None
                 or predecessor["turn_id"] != turn_id
                 or predecessor["input_revision"] != snapshot.input_revision
@@ -116,6 +119,7 @@ class DeliveryRepository:
                     "UPDATE outbox_messages SET status='cancelled',error_code='PREDECESSOR_NOT_DELIVERED' WHERE id=?",
                     (identifier,),
                 )
+                await self.cancel_successor(tx, identifier)
                 return None
             if predecessor["status"] != "delivered":
                 return None
@@ -233,7 +237,7 @@ class DeliveryRepository:
 
     async def cancel_successor(self, tx: Transaction, identifier: str) -> None:
         await tx.execute(
-            "UPDATE outbox_messages SET status='cancelled',error_code='PREDECESSOR_NOT_DELIVERED' WHERE predecessor_id=? AND status='ready'",
+            "WITH RECURSIVE descendants(id) AS (SELECT id FROM outbox_messages WHERE predecessor_id=? UNION SELECT o.id FROM outbox_messages o JOIN descendants d ON o.predecessor_id=d.id) UPDATE outbox_messages SET status='cancelled',error_code='PREDECESSOR_NOT_DELIVERED' WHERE id IN (SELECT id FROM descendants) AND status='ready'",
             (identifier,),
         )
 
@@ -292,7 +296,7 @@ class DeliveryRepository:
                 "UPDATE outbox_messages SET status='delivery_unknown',error_code='PROCESS_INTERRUPTED' WHERE status='sending'"
             )
             await tx.execute(
-                "UPDATE outbox_messages SET status='cancelled',error_code='PREDECESSOR_NOT_DELIVERED' WHERE status='ready' AND predecessor_id IN (SELECT id FROM outbox_messages WHERE status IN ('cancelled','permanent_failure','delivery_unknown'))"
+                "WITH RECURSIVE blocked(id) AS (SELECT id FROM outbox_messages WHERE status IN ('cancelled','permanent_failure','delivery_unknown') UNION SELECT o.id FROM outbox_messages o JOIN blocked b ON o.predecessor_id=b.id) UPDATE outbox_messages SET status='cancelled',error_code='PREDECESSOR_NOT_DELIVERED' WHERE status='ready' AND id IN (SELECT id FROM blocked)"
             )
 
         await self.database.write(recover)

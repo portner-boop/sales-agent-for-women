@@ -9,7 +9,7 @@ from app.modules.agent.time import resolve_current_times
 from app.modules.commerce.service import PLATFORM_URL
 from tests.helpers import conversation, scalar, update
 from tests.test_followups import due, enable
-from tests.test_platform_transition import seed_count
+from tests.test_platform_transition import finish_delivery, seed_count
 
 
 @pytest.mark.parametrize(
@@ -118,21 +118,27 @@ async def test_short_foreign_followup_is_repaired_in_conversation_language(
     await app.telegram.ingest([update(1, "静かな音楽が好き")])
     await app.drain()
     app.model.responses["followup"].append(
-        {"reply": "Ciao", "dialogue_act": "opinion", "should_send": True}
+        {
+            "reply": "Ti piace la chitarra?",
+            "dialogue_act": "question",
+            "question_goal": "guitar_interest",
+            "should_send": True,
+        }
     )
     app.model.responses["validate"].append(
         {"decision": "reject", "reason_codes": ["WRONG_LANGUAGE"]}
     )
     app.model.responses["repair"].append(
         {
-            "reply": "ギターの音も好きだな",
-            "dialogue_act": "opinion",
+            "reply": "ギターの音も好きですか？",
+            "dialogue_act": "question",
+            "question_goal": "guitar_interest",
             "should_send": True,
         }
     )
     await due(app)
     await app.drain()
-    assert app.sender.sent[-1] == (1, "ギターの音も好きだな")
+    assert app.sender.sent[-1] == (1, "ギターの音も好きですか？")
     assert (await conversation(app)).language == "ja"
     assert [task for task, _ in app.model.calls][-4:] == [
         "followup",
@@ -186,6 +192,7 @@ async def test_structured_time_uses_server_clock_in_any_language(
     data = next(data for task, data in app.model.calls if task == "generate")
     assert data["CURRENT_TIME_FACTS"] == [
         {
+            "precision": "approximate",
             "city": location,
             "timezone": timezone,
             "local_time": local_time,
@@ -286,7 +293,8 @@ async def test_transition_keeps_answer_and_invitation_in_any_language(
     )
     await app.telegram.ingest([update(2, question)])
     await app.drain()
-    assert app.sender.sent[-1] == (1, f"{answer}\n\n{notice}\n{PLATFORM_URL}")
+    await finish_delivery(app)
+    assert app.sender.sent[-2:] == [(1, answer), (1, f"{notice}\n{PLATFORM_URL}")]
     checked = next(data for task, data in app.model.calls if task == "validate")
     assert checked["reply"]["platform_notice"] == notice
 
@@ -322,7 +330,8 @@ async def test_missing_or_invalid_invitation_requires_repair(
     )
     await app.telegram.ingest([update(2, "Quoi de neuf ?")])
     await app.drain()
-    assert app.sender.sent[-1] == (1, f"{answer}\n\n{notice}\n{PLATFORM_URL}")
+    await finish_delivery(app)
+    assert app.sender.sent[-2:] == [(1, answer), (1, f"{notice}\n{PLATFORM_URL}")]
     repaired = next(data for task, data in app.model.calls if task == "repair")
     assert reason in repaired["REPAIR_REASON_CODES"]
 
@@ -387,4 +396,5 @@ async def test_transition_preserves_question_metadata_until_validation(
     repaired = next(data for task, data in app.model.calls if task == "repair")
     assert "TRANSITION_ANSWER_ONLY" in repaired["REPAIR_REASON_CODES"]
     assert repaired["REJECTED_PROPOSAL"]["question_goal"] == "recent_news"
-    assert app.sender.sent[-1] == (1, f"{answer}\n\n{notice}\n{PLATFORM_URL}")
+    await finish_delivery(app)
+    assert app.sender.sent[-2:] == [(1, answer), (1, f"{notice}\n{PLATFORM_URL}")]

@@ -51,8 +51,14 @@ class GatewayModel:
             2 if "TRUNCATED_OUTPUT" in data.get("STRUCTURE_ERRORS", []) else 1
         )
         model = self.model.model_copy(update={"max_tokens": output_tokens})
+        queue_started = asyncio.get_running_loop().time()
         async with asyncio.timeout(deadline_seconds):
             async with self.semaphore:
+                metrics = current_llm_metrics.get()
+                if metrics is not None:
+                    metrics["queue_seconds"] = (
+                        asyncio.get_running_loop().time() - queue_started
+                    )
                 if self.settings.structured_mode == "json_schema":
                     runnable = model.with_structured_output(
                         schema, method="json_schema", strict=False, include_raw=True
@@ -84,10 +90,15 @@ class GatewayModel:
 
     @staticmethod
     async def _invoke(runnable: Any, messages: list[AnyMessage]) -> Any:
+        started = asyncio.get_running_loop().time()
         try:
             return await runnable.ainvoke(messages)
         except LengthFinishReasonError as error:
             raise ModelOutputError("TRUNCATED_OUTPUT") from error
+        finally:
+            metrics = current_llm_metrics.get()
+            if metrics is not None:
+                metrics["model_seconds"] = asyncio.get_running_loop().time() - started
 
     @staticmethod
     def _require_complete(message: BaseModel) -> None:
@@ -152,8 +163,14 @@ class GatewayModel:
         block_tokens = sum(
             count_tokens_approximately([message]) for message in messages
         )
+        queue_started = asyncio.get_running_loop().time()
         async with asyncio.timeout(deadline_seconds):
             async with self.semaphore:
+                metrics = current_llm_metrics.get()
+                if metrics is not None:
+                    metrics["queue_seconds"] = (
+                        asyncio.get_running_loop().time() - queue_started
+                    )
                 try:
                     result = await asummarize_messages(
                         messages,

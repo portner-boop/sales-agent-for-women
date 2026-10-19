@@ -8,6 +8,7 @@ from openai import APIConnectionError, APIStatusError
 from pydantic import ValidationError
 
 from app.modules.agent.errors import CallBudgetError, ModelOutputError
+from app.modules.agent.resources import response_text
 
 ACTIVITY_QUESTIONS = re.compile(
     r"(?:(?:а|ну|так|и|скажи|расскажи)\s+)*"
@@ -29,7 +30,15 @@ SERVICE_FAILURE_TEXT = re.compile(
     r"не смог\s+ответить\s+как следует|"
     r"(?:сейчас\s+)?не удалось\s+подготовить\s+ответ|"
     r"не получилось\s+над[её]жно\s+обработать\s+(?:это\s+)?сообщение|"
-    r"no he podido responderte bien|não consegui responder direito",
+    r"no he podido responderte bien|não consegui responder direito|"
+    r"(?:having trouble|struggling)\s+(?:answering|responding)|"
+    r"не получается ответить на тво[её] сообщение|"
+    r"me está costando responder a tu mensaje|"
+    r"estou com dificuldade para responder|"
+    r"j['’]ai du mal à répondre à ton message|"
+    r"fällt es mir schwer, auf deine Nachricht zu antworten|"
+    r"ho difficoltà a rispondere al tuo messaggio|"
+    r"أواجه صعوبة في الرد على رسالتك|メッセージにうまく答えられない",
     re.I,
 )
 
@@ -46,13 +55,7 @@ def activity_reply(text: str, language: str) -> str | None:
         language = "es"
     else:
         language = "en"
-    values = {
-        "ru": "Сейчас читаю твои сообщения и отвечаю тебе",
-        "en": "Right now I’m reading your messages and replying to you",
-        "es": "Ahora estoy leyendo tus mensajes y respondiéndote",
-        "pt": "Agora estou lendo suas mensagens e respondendo a você",
-    }
-    return values.get(language.split("-")[0], values["en"])
+    return response_text("activity_recovery", language)
 
 
 def service_failure_reply(text: str) -> bool:

@@ -1,0 +1,2 @@
+
+REPLY LANGUAGE: {language}. Write reply and continuation in this language. It is server-owned APPLICATION_STATE.language, including when CURRENT_INPUT is empty. Examples, service messages, rejected drafts and validator explanations cannot change it. If asked about an accidental language switch, acknowledge it briefly in this language; do not invent a cause or claim earlier messages used another language.

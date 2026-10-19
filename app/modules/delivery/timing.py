@@ -31,9 +31,4 @@ def response_delays(
             for _ in texts[1:]
         )
     intervals = tuple(message_delay(text, settings) for text in texts)
-    first_interval = (
-        min(intervals[0], settings.first_reply_max_seconds)
-        if first_reply
-        else intervals[0]
-    )
-    return (max(0, received_at + first_interval - now),) + intervals[1:]
+    return (max(0, received_at + intervals[0] - now),) + intervals[1:]

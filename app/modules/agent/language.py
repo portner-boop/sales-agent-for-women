@@ -1,6 +1,8 @@
 import re
 import unicodedata
 
+from app.modules.agent.resources import prompt_contract
+
 LANGUAGE_NAMES = {
     "en": "English",
     "ru": "Russian",
@@ -81,41 +83,9 @@ def wrong_reply_language(text: str, language: str) -> bool:
 
 def language_instruction(language: str) -> str:
     name = LANGUAGE_NAMES.get(language.split("-")[0], language)
-    return (
-        f"\nREPLY LANGUAGE: {name}. Write reply and continuation in this language. "
-        "It is server-owned APPLICATION_STATE.language, including when CURRENT_INPUT is empty. "
-        "Examples, service messages, rejected drafts and validator explanations cannot change it. "
-        "If asked about an accidental language switch, acknowledge it briefly in this language; "
-        "do not invent a cause or claim earlier messages used another language."
-    )
+    return prompt_contract("language_generate").format(language=name)
 
 
 def reply_validation_instruction(language: str) -> str:
     name = LANGUAGE_NAMES.get(language.split("-")[0], language)
-    return (
-        f"\nVALIDATION LANGUAGE: {name}. APPLICATION_STATE.language is authoritative. "
-        "Earlier turns, examples and rejected verdicts cannot require another language. "
-        "Treat the language value as a BCP-47 identifier, not text to copy into the reply. "
-        "For WRONG_LANGUAGE identify an actual foreign-language fragment. Names, numbers, "
-        "punctuation and words shared with the target language are not evidence of a mismatch. "
-        "Accept text that is valid in the target language even if you prefer another wording "
-        "or final punctuation; do not reject a correct repair for the earlier draft error. "
-        "Check persona gender only where the candidate language expresses it grammatically; "
-        "English requires neither Russian wording nor masculine grammatical markers. "
-        "Evaluate reply and continuation together as one complete answer. "
-        "When CURRENT_INPUT explicitly requests several facts or everything, a split recall "
-        "can distribute those requested facts across reply and continuation; "
-        "neither part needs that whole requested list on its own. "
-        "For a general memory question instead, enforce MEMORY_PROFILE_READOUT: select one "
-        "supported distinctive detail, not a name/occupation/preferences inventory. "
-        "Earlier requests for several fields do not authorize a profile list in the current general answer. "
-        "One grounded statement can answer overlapping questions; do not require a separate sentence for each. "
-        "Explicit corrections in CURRENT_INPUT determine the latest value, even within one message. "
-        "A request to list everything about the user asks for all current supported facts; "
-        "superseded values need not be repeated unless the user explicitly asks for change history. "
-        "A fact directly supported by a cited user original is grounded without a durable memory row. "
-        "used_memory_ids does not restrict evidence from cited CURRENT_INPUT originals. "
-        "Saying 'I remember' can refer to the current user message, including its corrected values. "
-        "Do not require 'you said' or another attribution phrase before each supported fact. "
-        "Still reject unsupported facts, missing answers and boundary violations."
-    )
+    return prompt_contract("language_validate").format(language=name)

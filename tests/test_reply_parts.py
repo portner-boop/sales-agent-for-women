@@ -317,7 +317,7 @@ async def test_style_violation_in_second_part_is_repaired_before_any_send(
     app.model.responses["generate"].append(
         {
             "reply": "Кухня победила.",
-            "continuation": "Что теперь — на ужин?",
+            "continuation": "Что теперь на ужин? 😊",
             "dialogue_act": "chat",
             "question_goal": "replacement_dinner",
         }
@@ -339,7 +339,7 @@ async def test_style_violation_in_second_part_is_repaired_before_any_send(
         "Что теперь на ужин?",
     ]
     repair = next(data for name, data in app.model.calls if name == "repair")
-    assert "EM_DASH_NOT_ALLOWED" in repair["REPAIR_REASON_CODES"]
+    assert "STYLE_VIOLATION" in repair["REPAIR_REASON_CODES"]
     assert len(app.model.calls) == 4
 
 

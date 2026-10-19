@@ -1,3 +1,4 @@
+from app.modules.agent.resources import response_text
 from app.modules.commerce.repository import CommerceRepository
 from app.modules.commerce.schemas import HandoffContext, MockPurchase
 from app.modules.conversations.entities import Conversation
@@ -28,7 +29,6 @@ class CommerceService:
         return (
             conversation.control_state == "enabled"
             and conversation.purchase_state != "confirmed"
-            and not self.preview_closed(conversation)
         )
 
     def preview_closed(self, conversation: Conversation) -> bool:
@@ -42,6 +42,7 @@ class CommerceService:
         eligible = (
             self.settings.preview_enabled
             and self.can_reply(conversation)
+            and not self.preview_closed(conversation)
             and conversation.preview_reply_count >= self.settings.preview_min_replies
         )
         async with self.repository.database.read() as tx:
@@ -51,7 +52,7 @@ class CommerceService:
         return {
             "completed_replies": conversation.preview_reply_count,
             "eligible": allowed,
-            "required": self.settings.preview_enabled
+            "required": allowed
             and conversation.preview_reply_count
             >= self.settings.preview_max_replies - 1,
         }
@@ -59,14 +60,8 @@ class CommerceService:
     def transition_text(
         self, language: str, answer: str | None = None, notice: str | None = None
     ) -> str:
-        texts = {
-            "ru": "Если захочешь продолжить общение, на BeHappy2Day можно купить время для переписки",
-            "en": "If you’d like to keep chatting, you can buy chat time on BeHappy2Day",
-            "es": "Si te apetece seguir charlando, puedes comprar tiempo de chat en BeHappy2Day",
-            "pt": "Se quiser continuar conversando, pode comprar tempo de conversa no BeHappy2Day",
-        }
         invitation = (
-            (notice or texts.get(language.split("-")[0], texts["en"]))
+            (notice or response_text("platform_invitation", language))
             + "\n"
             + PLATFORM_URL
         )
@@ -92,15 +87,6 @@ class CommerceService:
         }
         closing = notice or texts.get(language.split("-")[0], texts["en"])
         return f"{answer.strip()}\n\n{closing}" if answer else closing
-
-    def closed_text(self, language: str) -> str:
-        texts = {
-            "ru": "Тут переписка уже закончилась\nПродолжить можно на BeHappy2Day",
-            "en": "This chat has ended here\nYou can continue on BeHappy2Day",
-            "es": "Este chat terminó aquí\nPuedes continuar en BeHappy2Day",
-            "pt": "Esta conversa terminou aqui\nVocê pode continuar no BeHappy2Day",
-        }
-        return texts.get(language.split("-")[0], texts["en"]) + "\n" + PLATFORM_URL
 
     async def confirm(
         self,

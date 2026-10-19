@@ -93,7 +93,8 @@ async def test_terminal_failure_does_not_poison_the_next_message(
     )
     await app.telegram.ingest([update(2, "new question")])
     await app.drain()
-    assert app.sender.sent == [(1, "I’m here")]
+    assert app.sender.sent[-1] == (1, "I’m here")
+    assert len(app.sender.sent) == 1
     data = next(data for task, data in app.model.calls if task == "generate")
     assert [item["text"] for item in data["CURRENT_INPUT"]] == ["new question"]
     assert await scalar(app, "SELECT COUNT(*) FROM messages WHERE role='user'") == 2
@@ -187,8 +188,8 @@ async def test_delayed_retry_respects_gateway_retry_after(
     app.model.responses["interpret"].append(error)
     await app.telegram.ingest([update(1, "hello")])
     await app.drain()
-    assert not app.sender.sent
     if header == "30":
+        assert not app.sender.sent
         assert (
             await scalar(app, "SELECT run_at FROM scheduled_jobs")
             == app.clock.now() + 30
@@ -201,6 +202,7 @@ async def test_delayed_retry_respects_gateway_retry_after(
         assert len(app.sender.sent) == 1
     else:
         assert retry_delay(error) is None
+        assert not app.sender.sent
         assert await scalar(app, "SELECT status FROM scheduled_jobs") == "dead_letter"
         assert await scalar(app, "SELECT pending FROM messages") == 0
 
@@ -208,6 +210,16 @@ async def test_delayed_retry_respects_gateway_retry_after(
 @pytest.mark.parametrize(
     "language,notice,answer",
     [
+        (
+            "en",
+            "I’m still here. I’m having trouble answering that right now",
+            "Quiet music is my preference",
+        ),
+        (
+            "ru",
+            "Я здесь. Сейчас не получается ответить на твоё сообщение по существу",
+            "Мне нравится спокойная музыка",
+        ),
         (
             "en",
             "I couldn’t give you a proper reply. Let’s try again",

@@ -264,10 +264,26 @@ class ConversationRepository:
 
         return await self.database.write(claim)
 
+    async def expire_pending(self, scope: ScopeContext, cutoff: float) -> int:
+        async def expire(tx: Transaction) -> int:
+            await require_scope(tx, scope)
+            await tx.execute(
+                "UPDATE turns SET status='unanswered' WHERE scope_id=? AND epoch=? AND status IN ('running','deferred') AND id IN (SELECT m.turn_id FROM messages m JOIN message_versions v ON v.message_id=m.id AND v.version=m.current_version WHERE m.pending=1 AND v.received_at<=?)",
+                (scope.scope_id, scope.epoch, cutoff),
+            )
+            cursor = await tx.execute(
+                "UPDATE messages SET pending=0 WHERE scope_id=? AND epoch=? AND pending=1 AND id IN (SELECT message_id FROM message_versions WHERE received_at<=? AND version=messages.current_version)",
+                (scope.scope_id, scope.epoch, cutoff),
+            )
+
+            return cursor.rowcount
+
+        return await self.database.write(expire)
+
     async def finish_turn(self, tx: Transaction, turn: Turn, status: str) -> None:
         await require_scope(tx, turn.scope)
         await tx.execute("UPDATE turns SET status=? WHERE id=?", (status, turn.id))
-        if status in {"prepared", "skipped"} and turn.messages:
+        if status in {"prepared", "skipped", "unanswered"} and turn.messages:
             for message in turn.messages:
                 await tx.execute(
                     "UPDATE messages SET pending=0 WHERE id=? AND current_version=?",
@@ -388,6 +404,11 @@ class ConversationRepository:
         message_id = uuid4().hex
         sequence = await self.next_sequence(tx, scope)
         role = "assistant" if kind == "reply" else "service"
+        if kind == "reply" and proposal.get("response_language"):
+            await tx.execute(
+                "UPDATE conversations SET language=? WHERE id=? AND epoch=?",
+                (proposal["response_language"], scope.scope_id, scope.epoch),
+            )
         await tx.execute(
             "INSERT INTO messages(id,scope_id,epoch,sequence,external_id,role,current_version,turn_id) VALUES(?,?,?,?,?,?,1,?)",
             (
@@ -412,6 +433,33 @@ class ConversationRepository:
                 json.dumps(
                     {
                         "confirmed_delivery": True,
+                        "question_goal": proposal.get("question_goal"),
+                        "question_subject_id": proposal.get(
+                            "question_subject_id", "user_self"
+                        ),
+                        **(
+                            {
+                                "question_time_scope": proposal.get(
+                                    "question_time_scope", "stable"
+                                )
+                            }
+                            if proposal.get("question_goal")
+                            else {}
+                        ),
+                        **(
+                            {
+                                "resume_question_thread_id": proposal[
+                                    "resume_question_thread_id"
+                                ]
+                            }
+                            if proposal.get("resume_question_thread_id")
+                            else {}
+                        ),
+                        "casual_imperfection_used": proposal.get(
+                            "casual_imperfection_used", False
+                        ),
+                        "casual_imperfection": proposal.get("casual_imperfection"),
+                        "style_plan": proposal.get("style_plan", {}),
                         **(
                             {"origin": "followup"}
                             if proposal.get("origin") == "followup"
@@ -436,21 +484,33 @@ class ConversationRepository:
         )
         question_goal = proposal.get("question_goal")
         if kind == "reply" and question_goal:
+            thread = await fetchone(
+                tx,
+                "SELECT topic_kind FROM dialogue_threads WHERE id=? AND scope_id=? AND epoch=? AND subject_id=?",
+                (
+                    proposal.get("question_thread_id"),
+                    scope.scope_id,
+                    scope.epoch,
+                    proposal.get("question_subject_id", "user_self"),
+                ),
+            )
             operation = AgendaOperation(
-                topic_kind=question_goal,
+                topic_kind=thread["topic_kind"] if thread else question_goal,
+                subject_id=proposal.get("question_subject_id", "user_self"),
                 status="awaiting_user",
                 question_goal=question_goal,
                 question_time_scope=proposal.get("question_time_scope", "stable"),
             )
             await self.update_agenda(tx, scope, operation, now)
             await tx.execute(
-                "UPDATE dialogue_threads SET last_question_message_id=? WHERE scope_id=? AND epoch=? AND question_goal=? AND question_time_scope=?",
+                "UPDATE dialogue_threads SET last_question_message_id=? WHERE scope_id=? AND epoch=? AND question_goal=? AND question_time_scope=? AND subject_id=?",
                 (
                     message_id,
                     scope.scope_id,
                     scope.epoch,
                     question_goal,
                     operation.question_time_scope,
+                    operation.subject_id,
                 ),
             )
         commitment = proposal.get("new_commitment_candidate")

@@ -303,6 +303,7 @@ class Application:
                 )
 
         await self.database.write(schedule)
+        await self.jobs.reconcile_turns(now)
 
     async def maintenance(self) -> None:
         while True:

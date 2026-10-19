@@ -9,7 +9,7 @@ from app.modules.delivery.entities import OutboxMessage
 from app.modules.followups.entities import FollowupTicket
 from app.modules.followups.repository import FollowupRepository
 from app.modules.followups.schemas import FollowupJob
-from app.modules.jobs.entities import Job
+from app.modules.jobs.entities import Job, JobRetryError
 from app.modules.jobs.repository import JobRepository
 from app.modules.jobs.schemas import JobPayload
 from app.shared.config import RuntimeSettings
@@ -110,7 +110,25 @@ class FollowupService:
         async def prepared(tx: Transaction) -> None:
             await self.repository.prepared(tx, ticket)
 
-        success = await self.processor(ticket, prepared)
+        try:
+            success = await self.processor(ticket, prepared)
+        except JobRetryError as error:
+            reason = error.code
+            retry_at = self.clock.now() + max(2**job.attempts, error.retry_after)
+            terminal = (
+                error.permanent or job.is_final_attempt or retry_at >= ticket.expires_at
+            )
+
+            async def failed(tx: Transaction) -> None:
+                if terminal:
+                    await self.repository.finish(tx, ticket.id, "skipped", reason)
+                else:
+                    await self.repository.retry(tx, ticket, reason)
+
+            await self.repository.database.write(failed)
+            raise JobRetryError(
+                error.code, retry_after=error.retry_after, permanent=terminal
+            ) from error
         if not success:
 
             async def skip(tx: Transaction) -> None:

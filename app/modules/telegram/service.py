@@ -226,6 +226,10 @@ class TelegramService:
                     except LookupError:
                         continue
                     if changed:
+                        await tx.execute(
+                            "UPDATE scheduled_jobs SET status='cancelled',error_code='NEW_INPUT' WHERE scope_id=? AND epoch=? AND kind='turn' AND status='pending'",
+                            (scope.scope_id, scope.epoch),
+                        )
                         await self.delivery.cancel_pending(tx, scope, "NEW_INPUT")
                         if event.message.is_edit:
                             await self.memory.repository.invalidate_source(
@@ -291,14 +295,6 @@ class TelegramService:
             if event.kind != "blocked":
                 await self._service(tx, scope, event, "stop")
         elif command == "start":
-            if self.commerce.preview_closed(conversation):
-                await self._text(
-                    tx,
-                    scope,
-                    event.update_id,
-                    self.commerce.closed_text(conversation.language),
-                )
-                return
             if conversation.purchase_state != "confirmed":
                 await self.conversations.set_control(tx, scope, "enabled")
                 key = "start"

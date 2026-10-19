@@ -6,7 +6,7 @@ from app.application import Application
 from app.evaluation import receive
 from app.modules.agent.entities import SchemaT
 from tests.helpers import PLATFORM_INVITATION_EN, scalar, update
-from tests.test_platform_transition import seed_count
+from tests.test_platform_transition import finish_delivery, seed_count
 
 
 @pytest.mark.parametrize(
@@ -123,7 +123,11 @@ async def test_departure_is_repaired_before_platform_invitation(
     )
     await app.telegram.ingest([update(2, "What’s new with you?")])
     await app.drain()
-    assert app.sender.sent[-1][1] == app.commerce.transition_text("en", answer)
+    await finish_delivery(app)
+    assert app.sender.sent[-2:] == [
+        (1, answer),
+        (1, app.commerce.transition_text("en")),
+    ]
     request = next(data for task, data in app.model.calls if task == "repair")
     assert "TRANSITION_IGNORED_QUESTION" in request["REPAIR_REASON_CODES"]
 
@@ -160,7 +164,7 @@ async def test_language_excuse_is_checked_against_originals(
     )
     assert app.sender.sent == [(1, answer)]
     assert len(checked_rules) == 1
-    assert "Reject INVENTED_LANGUAGE_HISTORY" in checked_rules[0]
+    assert "without inventing previous messages" in checked_rules[0]
 
 
 @pytest.mark.parametrize(

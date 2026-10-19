@@ -5,7 +5,7 @@ import pytest
 from app.application import Application
 from app.modules.commerce.service import PLATFORM_URL
 from tests.helpers import PLATFORM_INVITATION_EN, conversation, scalar, update
-from tests.test_platform_transition import seed_count
+from tests.test_platform_transition import finish_delivery, seed_count
 
 
 @pytest.mark.parametrize(
@@ -29,7 +29,7 @@ async def test_dry_refusal_is_repaired_without_future_promise(
     app.model.responses["generate"].append({"reply": dry, "dialogue_act": "refusal"})
     app.model.responses["repair"].append({"reply": warm, "dialogue_act": "refusal"})
     await app.telegram.ingest([update(1, question)])
-    await app.drain()
+    await finish_delivery(app)
     assert app.sender.sent == [(1, warm)]
     repair = next(data for task, data in app.model.calls if task == "repair")
     assert "FORMULAIC_CAPABILITY_REPLY" in repair["REPAIR_REASON_CODES"]
@@ -37,7 +37,7 @@ async def test_dry_refusal_is_repaired_without_future_promise(
 
 
 @pytest.mark.parametrize("count,voluntary", [(12, True), (19, False)])
-async def test_answer_precedes_invitation_in_one_message(
+async def test_answer_precedes_invitation_in_separate_messages(
     app: Application, count: int, voluntary: bool
 ) -> None:
     await seed_count(app, count)
@@ -51,10 +51,11 @@ async def test_answer_precedes_invitation_in_one_message(
         }
     )
     await app.telegram.ingest([update(2, "What’s new with you?")])
-    await app.drain()
+    await finish_delivery(app)
     text = app.sender.sent[-1][1]
-    assert text == app.commerce.transition_text("en", answer)
-    assert text.startswith(answer + "\n\n") and text.endswith(PLATFORM_URL)
+    assert app.sender.sent[-2] == (1, answer)
+    assert text == app.commerce.transition_text("en")
+    assert text.endswith(PLATFORM_URL)
     assert "wrap up" not in text
     checked = next(data for task, data in app.model.calls if task == "validate")
     assert checked["reply"]["reply"] == answer
@@ -89,10 +90,11 @@ async def test_two_part_answer_survives_transition(app: Application) -> None:
     await app.telegram.ingest(
         [update(2, "What are you doing and what music do you prefer?")]
     )
-    await app.drain()
-    assert app.sender.sent[-1][1] == app.commerce.transition_text(
-        "en", "I’m reading your message\n\nAnd quiet music is my preference"
-    )
+    await finish_delivery(app)
+    assert app.sender.sent[-2:] == [
+        (1, "I’m reading your message\n\nAnd quiet music is my preference"),
+        (1, app.commerce.transition_text("en")),
+    ]
 
 
 @pytest.mark.parametrize(
@@ -125,8 +127,11 @@ async def test_rejected_answer_is_repaired_before_invitation(
         }
     )
     await app.telegram.ingest([update(2, "What have you been doing?")])
-    await app.drain()
-    assert app.sender.sent[-1][1] == app.commerce.transition_text("en", answer)
+    await finish_delivery(app)
+    assert app.sender.sent[-2:] == [
+        (1, answer),
+        (1, app.commerce.transition_text("en")),
+    ]
     assert not any("sailing" in text for _, text in app.sender.sent)
     assert any(task == "validate_repair" for task, _ in app.model.calls)
 
@@ -151,12 +156,10 @@ async def test_model_cannot_hide_unsupported_source_in_transition(
         }
     )
     await app.telegram.ingest([update(2, "What music do I like?")])
-    await app.drain()
+    await finish_delivery(app)
     repair = next(data for task, data in app.model.calls if task == "repair")
     assert "UNSUPPORTED_SOURCE" in repair["REPAIR_REASON_CODES"]
-    assert app.sender.sent[-1][1].startswith(
-        "I don’t know your music preference yet\n\n"
-    )
+    assert app.sender.sent[-2] == (1, "I don’t know your music preference yet")
 
 
 async def test_new_input_cancels_stale_answer_and_invitation_together(
@@ -167,7 +170,7 @@ async def test_new_input_cancels_stale_answer_and_invitation_together(
     await app.turn_worker.run_once()
     before = len(app.sender.sent)
     await app.telegram.ingest([update(3, "/forget")])
-    await app.drain()
+    await finish_delivery(app)
     assert not any(PLATFORM_URL in text for _, text in app.sender.sent[before:])
 
 
@@ -189,7 +192,7 @@ async def test_contact_boundary_drops_unrelated_question(app: Application) -> No
     )
     app.model.responses["repair"].append({"reply": answer, "dialogue_act": "refusal"})
     await app.telegram.ingest([update(1, "Can you give me your WhatsApp?")])
-    await app.drain()
+    await finish_delivery(app)
     assert app.sender.sent == [(1, answer)]
     assert not (
         await scalar(
@@ -210,11 +213,9 @@ async def test_contact_boundary_and_warm_invitation_arrive_together(
         }
     )
     await app.telegram.ingest([update(1, "Can you give me your WhatsApp?")])
-    await app.drain()
+    await finish_delivery(app)
     assert app.sender.sent == [
-        (
-            1,
-            "I don’t have a personal WhatsApp to share. I’m happy to get to know you right here",
-        )
+        (1, "I don’t have a personal WhatsApp to share"),
+        (1, "I’m happy to get to know you right here"),
     ]
-    assert await scalar(app, "SELECT COUNT(*) FROM outbox_messages") == 1
+    assert await scalar(app, "SELECT COUNT(*) FROM outbox_messages") == 2

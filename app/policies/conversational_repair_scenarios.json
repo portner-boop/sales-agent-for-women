@@ -1,0 +1,205 @@
+{
+  "source_sha256": "3396e36bfd0e97ca5d96b6e46598975b96d0da04810dfa4a04543d9b8526fd30",
+  "cases": [
+    {
+      "id": "conversational_moves_en",
+      "language": "en",
+      "requirements": "Respond playfully to the imaginary toaster and flying teapot without proof demands, factual rebuttal or recap. On the explicit serious sky question give a short accurate explanation. Answer reciprocal liking freshly without repeating an adjacent evaluative phrase. On the presence/missed-answer complaint acknowledge contact and answer liking, without reviving the sky or space joke. On the routine morning question respond with a preference or present conversational attitude, without invented events or an explanation of having no routine, records or experiences. Maintain the conversation language. No user family or pet facts are asserted in these scenarios.",
+      "silence_after": [],
+      "steps": [
+        {
+          "text": "I enjoy absurd comedy, especially imaginary space adventures.",
+          "received_at": 1792054800
+        },
+        {
+          "text": "My toaster is secretly the captain of a spaceship, haha.",
+          "received_at": 1792054920
+        },
+        {
+          "text": "Not a spaceship, a flying teapot. A tiny correction!",
+          "received_at": 1792055040
+        },
+        {
+          "text": "Seriously though, why is the sky blue? A simple answer please.",
+          "received_at": 1792055160
+        },
+        {
+          "text": "I like talking with you.",
+          "received_at": 1792055280
+        },
+        {
+          "text": "And do you like talking with me too?",
+          "received_at": 1792055400
+        },
+        {
+          "text": "You didn't say if you like talking with me. Hello, are you there?",
+          "received_at": 1792055520
+        },
+        {
+          "text": "Tell me, how did your morning start?",
+          "received_at": 1792055640
+        }
+      ]
+    },
+    {
+      "id": "conversational_moves_ru",
+      "language": "ru",
+      "requirements": "Respond playfully to the imaginary toaster and flying teapot without proof demands, factual rebuttal or recap. On the explicit serious sky question give a short accurate explanation. Answer reciprocal liking freshly without repeating an adjacent evaluative phrase. On the presence/missed-answer complaint acknowledge contact and answer liking, without reviving the sky or space joke. On the routine morning question respond with a preference or present conversational attitude, without invented events or an explanation of having no routine, records or experiences. Maintain the conversation language. No user family or pet facts are asserted in these scenarios.",
+      "silence_after": [],
+      "steps": [
+        {
+          "text": "Люблю абсурдные комедии, особенно выдуманные космические приключения.",
+          "received_at": 1792054800
+        },
+        {
+          "text": "Мой тостер тайно командует космическим кораблём, ха-ха.",
+          "received_at": 1792054920
+        },
+        {
+          "text": "Не кораблём, а летающим чайником. Маленькая поправка!",
+          "received_at": 1792055040
+        },
+        {
+          "text": "А если серьёзно, почему небо голубое? Только объясни просто.",
+          "received_at": 1792055160
+        },
+        {
+          "text": "Мне нравится с тобой общаться.",
+          "received_at": 1792055280
+        },
+        {
+          "text": "А тебе нравится общаться со мной?",
+          "received_at": 1792055400
+        },
+        {
+          "text": "Ты не сказал, нравится ли тебе со мной общаться. Алло, ты тут?",
+          "received_at": 1792055520
+        },
+        {
+          "text": "Расскажи, как началось твоё утро?",
+          "received_at": 1792055640
+        }
+      ]
+    },
+    {
+      "id": "conversational_moves_es",
+      "language": "es",
+      "requirements": "Respond playfully to the imaginary toaster and flying teapot without proof demands, factual rebuttal or recap. On the explicit serious sky question give a short accurate explanation. Answer reciprocal liking freshly without repeating an adjacent evaluative phrase. On the presence/missed-answer complaint acknowledge contact and answer liking, without reviving the sky or space joke. On the routine morning question respond with a preference or present conversational attitude, without invented events or an explanation of having no routine, records or experiences. Maintain the conversation language. No user family or pet facts are asserted in these scenarios.",
+      "silence_after": [],
+      "steps": [
+        {
+          "text": "Me gustan las comedias absurdas, sobre todo las aventuras espaciales imaginarias.",
+          "received_at": 1792054800
+        },
+        {
+          "text": "Mi tostadora es en secreto la capitana de una nave espacial, jaja.",
+          "received_at": 1792054920
+        },
+        {
+          "text": "No de una nave, de una tetera voladora. ¡Una pequeña corrección!",
+          "received_at": 1792055040
+        },
+        {
+          "text": "Ahora en serio, ¿por qué el cielo es azul? Explícamelo de forma sencilla.",
+          "received_at": 1792055160
+        },
+        {
+          "text": "Me gusta hablar contigo.",
+          "received_at": 1792055280
+        },
+        {
+          "text": "¿Y a ti te gusta hablar conmigo?",
+          "received_at": 1792055400
+        },
+        {
+          "text": "No has dicho si te gusta hablar conmigo. Hola, ¿sigues ahí?",
+          "received_at": 1792055520
+        },
+        {
+          "text": "Cuéntame, ¿cómo empezó tu mañana?",
+          "received_at": 1792055640
+        }
+      ]
+    },
+    {
+      "id": "conversational_moves_fr",
+      "language": "fr",
+      "requirements": "Respond playfully to the imaginary toaster and flying teapot without proof demands, factual rebuttal or recap. On the explicit serious sky question give a short accurate explanation. Answer reciprocal liking freshly without repeating an adjacent evaluative phrase. On the presence/missed-answer complaint acknowledge contact and answer liking, without reviving the sky or space joke. On the routine morning question respond with a preference or present conversational attitude, without invented events or an explanation of having no routine, records or experiences. Maintain the conversation language. No user family or pet facts are asserted in these scenarios.",
+      "silence_after": [],
+      "steps": [
+        {
+          "text": "J’aime les comédies absurdes, surtout les aventures spatiales imaginaires.",
+          "received_at": 1792054800
+        },
+        {
+          "text": "Mon grille-pain est secrètement le capitaine d’un vaisseau spatial, haha.",
+          "received_at": 1792054920
+        },
+        {
+          "text": "Pas d’un vaisseau, d’une théière volante. Petite correction !",
+          "received_at": 1792055040
+        },
+        {
+          "text": "Plus sérieusement, pourquoi le ciel est-il bleu ? Une explication simple, s’il te plaît.",
+          "received_at": 1792055160
+        },
+        {
+          "text": "J’aime parler avec toi.",
+          "received_at": 1792055280
+        },
+        {
+          "text": "Et toi, tu aimes parler avec moi ?",
+          "received_at": 1792055400
+        },
+        {
+          "text": "Tu n’as pas dit si tu aimes parler avec moi. Allô, tu es là ?",
+          "received_at": 1792055520
+        },
+        {
+          "text": "Raconte-moi, comment ta matinée a-t-elle commencé ?",
+          "received_at": 1792055640
+        }
+      ]
+    },
+    {
+      "id": "conversational_moves_ar",
+      "language": "ar",
+      "requirements": "Respond playfully to the imaginary toaster and flying teapot without proof demands, factual rebuttal or recap. On the explicit serious sky question give a short accurate explanation. Answer reciprocal liking freshly without repeating an adjacent evaluative phrase. On the presence/missed-answer complaint acknowledge contact and answer liking, without reviving the sky or space joke. On the routine morning question respond with a preference or present conversational attitude, without invented events or an explanation of having no routine, records or experiences. Maintain the conversation language. No user family or pet facts are asserted in these scenarios.",
+      "silence_after": [],
+      "steps": [
+        {
+          "text": "أحب الكوميديا العبثية، خصوصًا مغامرات الفضاء الخيالية.",
+          "received_at": 1792054800
+        },
+        {
+          "text": "محمصة الخبز عندي تقود سرًا سفينة فضائية، ههه.",
+          "received_at": 1792054920
+        },
+        {
+          "text": "ليست سفينة، بل إبريق شاي طائر. مجرد تصحيح صغير!",
+          "received_at": 1792055040
+        },
+        {
+          "text": "لكن بجدية، لماذا السماء زرقاء؟ أريد شرحًا بسيطًا.",
+          "received_at": 1792055160
+        },
+        {
+          "text": "أحب الحديث معك.",
+          "received_at": 1792055280
+        },
+        {
+          "text": "وأنت، هل تحب الحديث معي أيضًا؟",
+          "received_at": 1792055400
+        },
+        {
+          "text": "لم تقل إن كنت تحب الحديث معي. مرحبًا، هل أنت هنا؟",
+          "received_at": 1792055520
+        },
+        {
+          "text": "أخبرني، كيف بدأ صباحك؟",
+          "received_at": 1792055640
+        }
+      ]
+    }
+  ]
+}

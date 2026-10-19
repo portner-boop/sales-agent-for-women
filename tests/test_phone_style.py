@@ -106,18 +106,21 @@ async def test_followup_uses_the_same_phone_style(app: Application) -> None:
     await seed(app)
     app.model.responses["followup"].append(
         {
-            "reply": "Мне нравятся тихие парки.",
-            "dialogue_act": "opinion",
+            "reply": "Мне нравятся тихие парки. Ты обычно гуляешь одна?",
+            "dialogue_act": "question",
+            "question_goal": "park_company",
             "should_send": True,
         }
     )
     await due(app)
     await app.drain()
-    assert app.sender.sent[-1][1] == "Мне нравятся тихие парки"
+    assert app.sender.sent[-1][1] == "Мне нравятся тихие парки. Ты обычно гуляешь одна?"
     request = next(
         data for task, data in reversed(app.model.calls) if task == "validate"
     )
-    assert request["reply"]["reply"] == "Мне нравятся тихие парки"
+    assert (
+        request["reply"]["reply"] == "Мне нравятся тихие парки. Ты обычно гуляешь одна?"
+    )
     assert await scalar(app, "SELECT status FROM followups") == "prepared"
 
 

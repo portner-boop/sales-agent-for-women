@@ -177,20 +177,20 @@ async def test_generation_counts_toward_pacing_without_delaying_overdue_answers(
 
     monkeypatch.setattr(app.model, "complete", slow)
     rows = await prepare(app, (length,), first=first)
-    target = min(10 if first else 60, max(5, 3 + length / 3))
+    target = min(60, max(5, 3 + length / 3))
     expected = max(elapsed, target)
     assert rows[0]["created_at"] - started == pytest.approx(expected)
     assert rows[0]["message_delay_seconds"] == pytest.approx(max(0, target - elapsed))
 
 
-async def test_ten_second_cap_only_applies_until_first_reply_is_delivered(
+async def test_first_and_later_answers_follow_the_same_formula(
     paced_app: Application,
 ) -> None:
     app = paced_app
     started = app.clock.now()
     first = (await prepare(app, (140,), first=True))[0]
-    assert first["created_at"] - started == 10
-    app.clock.advance(10)
+    assert first["created_at"] - started == pytest.approx(3 + 140 / 3)
+    app.clock.advance(first["created_at"] - app.clock.now())
     await app.delivery.run_once()
     assert (await conversation(app)).first_reply_at == app.clock.now()
     app.model.responses["generate"].append(
@@ -385,8 +385,9 @@ async def test_followup_is_skipped_when_length_delay_exceeds_remaining_ttl(
     app.clock.advance(expires - app.clock.now() - 5)
     app.model.responses["followup"].append(
         {
-            "reply": "A quiet melody feels better than noise",
-            "dialogue_act": "opinion",
+            "reply": "What music do you put on to unwind?",
+            "dialogue_act": "question",
+            "question_goal": "relaxing_music",
             "should_send": True,
         }
     )
@@ -479,7 +480,10 @@ async def test_platform_transition_uses_length_of_final_text_with_link(
     app.commerce.settings = settings
 
     async def eligible(tx: Transaction) -> None:
-        await tx.execute("UPDATE conversations SET preview_reply_count=12")
+        await tx.execute(
+            "UPDATE conversations SET preview_reply_count=?",
+            (settings.preview_min_replies,),
+        )
 
     await app.database.write(eligible)
     app.model.responses["generate"].append(
@@ -494,12 +498,25 @@ async def test_platform_transition_uses_length_of_final_text_with_link(
     received_at = app.clock.now()
     await app.turn_worker.run_once()
     async with app.database.read() as tx:
-        row = await fetchone(
+        rows = await fetchall(
             tx,
-            "SELECT text,created_at FROM outbox_messages WHERE json_extract(proposal_json,'$.origin')='platform_redirect'",
+            "SELECT * FROM outbox_messages WHERE json_extract(proposal_json,'$.origin') IN ('platform_answer','platform_redirect') ORDER BY rowid",
         )
-    assert row is not None
-    assert row["text"].endswith("https://www.behappy2day.com/")
-    assert row["created_at"] - received_at == pytest.approx(
-        min(60, 3 + len(row["text"]) / 3)
-    )
+    answer, invitation = rows
+    assert invitation["predecessor_id"] == answer["id"]
+    assert answer["text"] == "a" * 60
+    assert invitation["text"].endswith("https://www.behappy2day.com/")
+    assert answer["created_at"] - received_at == pytest.approx(23)
+    app.clock.advance(23)
+    await app.delivery.run_once()
+    assert app.sender.sent[-1] == (1, "a" * 60)
+    due = await app.delivery_repository.next_ready_at((await conversation(app)).scope)
+    assert due is not None
+    interval = min(60, 3 + len(invitation["text"]) / 3)
+    assert due - app.clock.now() == pytest.approx(interval)
+    app.clock.advance(interval - 0.1)
+    await app.delivery.run_once()
+    assert app.sender.sent[-1] == (1, "a" * 60)
+    app.clock.advance(0.1)
+    await app.delivery.run_once()
+    assert app.sender.sent[-1] == (1, invitation["text"])

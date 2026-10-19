@@ -28,21 +28,28 @@ async def test_invalid_json_and_transient_timeouts_recover_before_sending(
 
 
 @pytest.mark.parametrize(
-    "text", ["Кофе с мёдом — необычный выбор.", "That coffee — quite a surprise."]
+    "text,user_text",
+    [
+        ("Кофе с мёдом — необычный выбор.", "Кофе с мёдом."),
+        ("That coffee — quite a surprise.", "Coffee with honey."),
+        ("С тобой – спокойно.", "Давай поболтаем."),
+    ],
 )
-async def test_em_dash_triggers_repair_before_sending(
-    app: Application, text: str
+async def test_typographic_dash_is_normalized_and_checked_before_sending(
+    app: Application, text: str, user_text: str
 ) -> None:
     app.model.responses["generate"].append({"reply": text, "dialogue_act": "comment"})
-    app.model.responses["repair"].append(
-        {"reply": "Неожиданно. Интересный выбор.", "dialogue_act": "comment"}
-    )
-    await app.telegram.ingest([update(1, "Кофе с мёдом.")])
+    await app.telegram.ingest([update(1, user_text)])
     await app.drain()
-    assert app.sender.sent == [(1, "Неожиданно. Интересный выбор")]
-    repair = next(data for task, data in app.model.calls if task == "repair")
-    assert "EM_DASH_NOT_ALLOWED" in repair["REPAIR_REASON_CODES"]
-    assert len(app.model.calls) <= 4
+    expected = text.translate(str.maketrans("—–", "--")).rstrip(".")
+    assert app.sender.sent == [(1, expected)]
+    checked = next(data for task, data in app.model.calls if task == "validate")
+    assert checked["reply"]["reply"] == expected
+    assert [task for task, _ in app.model.calls] == [
+        "interpret",
+        "generate",
+        "validate",
+    ]
 
 
 async def test_style_repair_is_bounded_and_accepted(app: Application) -> None:
@@ -61,7 +68,6 @@ async def test_style_repair_is_bounded_and_accepted(app: Application) -> None:
 @pytest.mark.parametrize(
     "text",
     [
-        "С тобой – спокойно.",
         "С тобой -- спокойно.",
         "Договорились :)",
         "Договорились)",
@@ -267,6 +273,9 @@ async def test_reply_to_original_is_present_in_interpreter_and_generator(
 
 
 async def test_interpreter_memory_projection_is_bounded(app: Application) -> None:
+    app.agent.builder.settings = app.settings.memory.model_copy(
+        update={"context_tokens": 12000}
+    )
     from app.modules.memory.schemas import MemoryOperation
 
     await app.telegram.ingest([update(1, "I enjoy many interests.")])
@@ -333,7 +342,14 @@ async def test_rhetorical_reaction_has_no_agenda_goal_and_is_critically_checked(
     ]
     assert await scalar(app, "SELECT COUNT(*) FROM dialogue_threads") == 0
     metrics = json.loads(await scalar(app, "SELECT metrics_json FROM agent_runs"))
-    assert metrics["validation_events"][-1]["decision"] == "accept"
+    assert (
+        next(
+            event
+            for event in metrics["validation_events"]
+            if event["stage"] == "draft_semantic"
+        )["decision"]
+        == "accept"
+    )
 
 
 async def test_information_question_without_goal_cannot_bypass_critic(

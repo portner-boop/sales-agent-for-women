@@ -406,13 +406,33 @@ async def test_semantic_patch_rejection_precedes_persistent_write(
     assert [task for task, _ in app.model.calls] == [
         "interpret",
         "validate_memory",
-        "recover",
-        "validate_recovery",
+        "generate",
+        "validate",
     ]
-    recovery = next(data for task, data in app.model.calls if task == "recover")
-    assert recovery["CURRENT_INPUT"][0]["text"] == "My name is Ana."
-    assert not recovery["MEMORY_DATA"]["facts"]
+    generated = next(data for task, data in app.model.calls if task == "generate")
+    assert generated["CURRENT_INPUT"][0]["text"] == "My name is Ana."
+    assert not generated["MEMORY_DATA"]["facts"]
     assert await scalar(app, "SELECT status FROM agent_runs") == "prepared"
+
+
+async def test_model_memory_projection_keeps_evidence_without_storage_fields(
+    app: Application,
+) -> None:
+    await store(
+        app, 1, "My name is Ana", predicate="preferred_name", value="Ana", kind="fact"
+    )
+    current = await conversation(app)
+    stored = (await app.memory.repository.items(current.scope))[0]
+    data = next(data for task, data in app.model.calls if task == "generate")
+    supplied = data["MEMORY_DATA"]["facts"][0]
+    omitted = {"scope_id", "epoch", "recorded_at"}
+    assert omitted.issubset(stored)
+    assert omitted.isdisjoint(supplied)
+    assert supplied == {
+        key: value for key, value in stored.items() if key not in omitted
+    }
+    assert supplied["sources"][0]["evidence_text"] == "My name is Ana"
+    assert stored["scope_id"] == current.id
 
 
 async def test_old_epoch_summary_cannot_publish_after_deletion(
