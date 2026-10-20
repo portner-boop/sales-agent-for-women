@@ -23,9 +23,10 @@ class LLMSettings(ConfigModel):
     api_key: SecretStr = SecretStr("")
     output_tokens: int = Field(default=1200, ge=256)
     structured_mode: Literal["json_schema", "json_object", "prompt_json"] = (
-        "json_schema"
+        "json_object"
     )
     reasoning_effort: Literal["none", "low"] | None = "none"
+    verbosity: Literal["low", "medium", "high"] | None = "low"
 
 
 class StorageSettings(ConfigModel):
@@ -36,56 +37,64 @@ class StorageSettings(ConfigModel):
     retention_days: int = Field(default=30, ge=1)
 
 
+class ReplyTimingSettings(ConfigModel):
+    enabled: bool = True
+    pause_min_seconds: float = Field(default=2, ge=0, allow_inf_nan=False)
+    pause_max_seconds: float = Field(default=4, ge=0, allow_inf_nan=False)
+    characters_per_second: float = Field(default=3, gt=0, allow_inf_nan=False)
+    jitter_fraction: float = Field(default=0.2, ge=0, lt=1, allow_inf_nan=False)
+    minimum_seconds: float = Field(default=5, ge=0, allow_inf_nan=False)
+    maximum_seconds: float = Field(default=60, gt=0, allow_inf_nan=False)
+
+    @model_validator(mode="after")
+    def ordered_ranges(self) -> "ReplyTimingSettings":
+        if self.pause_min_seconds > self.pause_max_seconds:
+            raise ValueError("Reply pause range is reversed")
+        if self.minimum_seconds > self.maximum_seconds:
+            raise ValueError("Reply duration range is reversed")
+        return self
+
+
 class RuntimeSettings(ConfigModel):
-    tester_ids: frozenset[int] = frozenset()
+    reply_timing: ReplyTimingSettings = ReplyTimingSettings()
+    response_max_age_seconds: float = Field(default=180, gt=0)
+    dialogue_max_calls: int = Field(default=2, ge=1, le=2)
+    research_api_call_limit: int = Field(default=2500, ge=1, le=2500)
     llm_concurrency: int = Field(default=5, ge=1)
-    llm_max_calls: int = Field(default=8, ge=6, le=8)
     llm_attempt_seconds: float = Field(default=12, gt=0)
     turn_deadline_seconds: float = Field(default=45, gt=0)
-    first_deadline_seconds: float = Field(default=10, gt=0)
+    first_deadline_seconds: float = Field(default=15, gt=0)
     coalesce_seconds: float = Field(default=0.5, ge=0)
     max_coalesce_seconds: float = Field(default=2, gt=0)
     activity_gap_seconds: int = Field(default=1800, ge=1)
     max_message_chars: int = Field(default=16000, ge=1)
     kill_switch: bool = False
-    reply_pacing_enabled: bool = True
-    reply_pause_min_seconds: float = Field(default=2, ge=0, le=16)
-    reply_pause_max_seconds: float = Field(default=4, ge=0, le=16)
-    reply_typing_chars_per_second: float = Field(default=3, gt=0, allow_inf_nan=False)
-    reply_delay_jitter_ratio: float = Field(default=0.2, ge=0, le=1)
-    reply_delay_min_seconds: float = Field(default=5, ge=0, allow_inf_nan=False)
-    reply_delay_max_seconds: float = Field(default=60, gt=0, allow_inf_nan=False)
-    first_reply_max_seconds: float = Field(default=10, gt=0, allow_inf_nan=False)
     followup_enabled: bool = False
     followup_min_seconds: float = Field(default=60, ge=1)
     followup_max_seconds: float = Field(default=60, ge=1)
     followup_ttl_seconds: float = Field(default=90, ge=10)
+    followup_max_count: int = Field(default=2, ge=1, le=2)
+    followup_second_seconds: float = Field(default=180, ge=1)
 
     @model_validator(mode="after")
-    def validate_reply_pause(self) -> "RuntimeSettings":
-        if self.reply_pause_min_seconds > self.reply_pause_max_seconds:
-            raise ValueError("Minimum reply pause exceeds maximum")
-        if self.reply_delay_min_seconds > self.reply_delay_max_seconds:
-            raise ValueError("Minimum reply delay exceeds maximum")
+    def validate_followup_range(self) -> "RuntimeSettings":
         if self.followup_min_seconds > self.followup_max_seconds:
             raise ValueError("Minimum follow-up delay exceeds maximum")
+        if (
+            self.followup_max_count > 1
+            and self.followup_second_seconds <= self.followup_max_seconds
+        ):
+            raise ValueError("Second follow-up must follow the first opportunity")
         return self
 
 
 class MemorySettings(ConfigModel):
     context_tokens: int = Field(default=64000, ge=2000)
-    recent_turns: int = Field(default=6, ge=1)
-    history_threshold_tokens: int = Field(default=6000, ge=1)
-    block_tokens: int = Field(default=2500, ge=100)
-    summary_tokens: int = Field(default=700, ge=64)
-    summary_context_tokens: int = Field(default=900, ge=64)
 
 
 class CommerceSettings(ConfigModel):
-    package_minutes: int = Field(default=20, ge=1)
-    preview_enabled: bool = False
-    preview_min_replies: int = Field(default=15, ge=1)
-    preview_max_replies: int = Field(default=20, ge=2)
+    preview_min_replies: int = Field(default=15, ge=15, le=19)
+    preview_max_replies: int = Field(default=20, ge=2, le=20)
 
     @model_validator(mode="after")
     def validate_preview_range(self) -> "CommerceSettings":

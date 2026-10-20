@@ -1,0 +1,48 @@
+{
+  "recent_days": 14,
+  "episodes": [
+    {
+      "id": "weekend-2026-10-17",
+      "starts_on": "2026-10-17",
+      "ends_on": "2026-10-18",
+      "authorship": "approved_fictional_character_history",
+      "events": [
+        {
+          "date": "2026-10-17",
+          "time_of_day": "afternoon",
+          "action": "lunch with Ante at his restaurant",
+          "companions": [
+            "Ante"
+          ],
+          "details": [
+            "grilled fish",
+            "vegetables",
+            "talk about music",
+            "no alcohol"
+          ]
+        },
+        {
+          "date": "2026-10-18",
+          "time_of_day": "afternoon",
+          "action": "walk outdoors",
+          "details": [],
+          "companions": "alone"
+        },
+        {
+          "date": "2026-10-18",
+          "time_of_day": "evening",
+          "action": "cooked tomato pasta at home",
+          "details": [],
+          "companions": "alone"
+        },
+        {
+          "date": "2026-10-18",
+          "time_of_day": "evening",
+          "action": "listened to music at home",
+          "details": [],
+          "companions": "alone"
+        }
+      ]
+    }
+  ]
+}

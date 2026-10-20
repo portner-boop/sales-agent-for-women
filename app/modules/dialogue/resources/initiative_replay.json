@@ -1,0 +1,16 @@
+[
+  {
+    "id": "ordinary-initiative",
+    "steps": [
+      {"message": "привет Марко, я Лера. зашла на пару минут, пока чай остывает", "language": "ru"},
+      {"message": "добралась с работы наконец. в цветочном сегодня весь день на ногах, теперь музыку включила", "language": "ru"},
+      {"message": "я чаще Нину Симон включаю, когда дома что-нибудь делаю", "language": "ru"},
+      {"message": "ага", "language": "ru"},
+      {"message": "let’s switch to English. no questions for now, just tell me what you like about evenings at home", "language": "en"},
+      {"wait_seconds": 60},
+      {"wait_seconds": 120},
+      {"message": "на сегодня всё, спокойной ночи. первым не пиши", "language": "ru"},
+      {"wait_seconds": 240}
+    ]
+  }
+]

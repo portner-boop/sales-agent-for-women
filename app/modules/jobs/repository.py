@@ -37,11 +37,6 @@ class JobRepository:
                 now,
             ),
         )
-        if kind == "compact":
-            await tx.execute(
-                "UPDATE scheduled_jobs SET rerun_requested=1 WHERE dedup_key=? AND status='running'",
-                (dedup_key,),
-            )
 
     async def claim(self, now: float, kinds: tuple[str, ...]) -> Job | None:
         async def claim(tx: Transaction) -> Job | None:
@@ -67,7 +62,13 @@ class JobRepository:
             )
             payload = JobPayload.model_validate_json(row["payload_json"])
             return Job(
-                row["id"], row["kind"], scope, payload.data, row["attempts"] + 1, token
+                row["id"],
+                row["kind"],
+                scope,
+                payload.data,
+                row["attempts"] + 1,
+                token,
+                payload.terminal_error,
             )
 
         return await self.database.write(claim)
@@ -95,7 +96,7 @@ class JobRepository:
                     (
                         now
                         if error_code is None
-                        else now + max(min(60, 2**job.attempts), retry_after)
+                        else now + max(min(60, 2 ** min(job.attempts, 6)), retry_after)
                     ),
                     error_code,
                     job.id,
@@ -104,6 +105,25 @@ class JobRepository:
             )
 
         await self.database.write(finish)
+
+    async def mark_terminal(self, job: Job, error_code: str) -> bool:
+        async def mark(tx: Transaction) -> bool:
+            cursor = await tx.execute(
+                "UPDATE scheduled_jobs SET payload_json=json_set(payload_json,'$.terminal_error',?) WHERE id=? AND status='running' AND lease_token=?",
+                (error_code, job.id, job.lease_token),
+            )
+            return cursor.rowcount == 1
+
+        return await self.database.write(mark)
+
+    async def defer_terminal(self, job: Job, now: float) -> None:
+        async def defer(tx: Transaction) -> None:
+            await tx.execute(
+                "UPDATE scheduled_jobs SET status='pending',run_at=?,lease_until=NULL,lease_token=NULL WHERE id=? AND status='running' AND lease_token=?",
+                (now + min(30, 2 ** min(job.attempts, 5)), job.id, job.lease_token),
+            )
+
+        await self.database.write(defer)
 
     async def renew(self, job: Job, now: float) -> bool:
         async def renew(tx: Transaction) -> bool:
@@ -131,7 +151,7 @@ class JobRepository:
             )
             rows = await fetchall(
                 tx,
-                "SELECT c.id,c.epoch,c.input_revision,MIN(v.received_at) received_at FROM conversations c JOIN messages m ON m.scope_id=c.id AND m.epoch=c.epoch JOIN message_versions v ON v.message_id=m.id AND v.version=m.current_version WHERE m.pending=1 AND c.control_state='enabled' GROUP BY c.id,c.epoch,c.input_revision",
+                "SELECT c.id,c.epoch,c.input_revision,MIN(v.received_at) received_at FROM conversations c JOIN messages m ON m.scope_id=c.id AND m.epoch=c.epoch JOIN message_versions v ON v.message_id=m.id AND v.version=m.current_version WHERE m.pending=1 AND c.control_state='enabled' AND NOT EXISTS(SELECT 1 FROM runtime_controls WHERE kill_switch=1) GROUP BY c.id,c.epoch,c.input_revision",
             )
             for row in rows:
                 scope = ScopeContext(row["id"], row["epoch"])
@@ -144,12 +164,18 @@ class JobRepository:
                     key = f"turn:{scope.scope_id}:{scope.epoch}:{row['input_revision']}"
                     existing = await fetchone(
                         tx,
-                        "SELECT status FROM scheduled_jobs WHERE dedup_key=?",
+                        "SELECT status FROM scheduled_jobs WHERE dedup_key=? ORDER BY rowid DESC LIMIT 1",
                         (key,),
                     )
-                    if existing is None:
+                    if existing is None or existing["status"] in {"done", "cancelled"}:
                         await self.schedule(
-                            tx, "turn", key, row["received_at"], now, scope
+                            tx,
+                            "turn",
+                            key,
+                            row["received_at"],
+                            now,
+                            scope,
+                            JobPayload(data={"input_revision": row["input_revision"]}),
                         )
 
         await self.database.write(reconcile)

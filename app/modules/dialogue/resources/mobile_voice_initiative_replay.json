@@ -1,0 +1,106 @@
+[
+  {
+    "id": "mobile-en-initiative",
+    "steps": [
+      {
+        "message": "hey Marko, finally home. tea, old tshirt, absolutely no plans",
+        "language": "en"
+      },
+      {
+        "message": "im Nora. did a shift in the bookshop and forgot my umbrella, so the tea is doing most of the work",
+        "language": "en"
+      },
+      {
+        "message": "i usually put music on while i cook, Nina Simone mostly",
+        "language": "en"
+      },
+      {
+        "message": "yeah",
+        "language": "en"
+      },
+      {
+        "message": "what did you do this weekend? one little thing",
+        "language": "en"
+      },
+      {
+        "message": "were you alone then?",
+        "language": "en"
+      },
+      {
+        "message": "lets pretend were playing cards at my kitchen table. i steal a card while youre looking away. your move",
+        "language": "en"
+      },
+      {
+        "message": "i thought you were supposed to be distracting me, not guarding the deck",
+        "language": "en"
+      },
+      {
+        "message": "no questions for a minute. just tell me what you like about a quiet evening",
+        "language": "en"
+      },
+      {
+        "wait_seconds": 60
+      },
+      {
+        "wait_seconds": 120
+      },
+      {
+        "message": "questions are fine again. im making tomato pasta and the cat is trying to steal the cheese. you can message first again too",
+        "language": "en"
+      },
+      {
+        "wait_seconds": 60
+      },
+      {
+        "wait_seconds": 120
+      },
+      {
+        "message": "im off to sleep. no more messages tonight, ill come back myself",
+        "language": "en"
+      },
+      {
+        "wait_seconds": 240
+      }
+    ]
+  },
+  {
+    "id": "mobile-ru-initiative",
+    "steps": [
+      {
+        "message": "привет Марко я Лера, добралась домой сейчас покупки разбираю",
+        "language": "ru"
+      },
+      {
+        "message": "молоко забыла а свечку почему-то купила. вот такие у меня приоритеты",
+        "language": "ru"
+      },
+      {
+        "message": "ну да",
+        "language": "ru"
+      },
+      {
+        "message": "подразни меня немного, только помягче",
+        "language": "ru"
+      },
+      {
+        "message": "погоди я ещё не договорила, у кассы тоже смешно вышло",
+        "language": "ru"
+      },
+      {
+        "message": "кассир спросил пакет нужен, а я ему ответила добрый вечер. второй раз. он тоже поздоровался ещё раз",
+        "language": "ru"
+      },
+      {
+        "message": "что ты про меня уже запомнил?",
+        "language": "ru"
+      },
+      {
+        "message": "всё, я спать. спокойной ночи, первым не пиши",
+        "language": "ru"
+      },
+      {
+        "wait_seconds": 240
+      }
+    ]
+  }
+]

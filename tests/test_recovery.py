@@ -115,41 +115,81 @@ def test_only_one_process_owns_storage(tmp_path: Path) -> None:
                 pass
 
 
-async def test_compaction_request_during_lease_survives_dedup(app: Application) -> None:
+async def test_backup_request_during_lease_does_not_repeat_completed_job(
+    app: Application,
+) -> None:
     async def schedule(tx: Transaction) -> None:
         await app.jobs.schedule(
-            tx, "compact", "compact-test", app.clock.now(), app.clock.now()
+            tx, "backup", "backup-test", app.clock.now(), app.clock.now()
         )
 
     await app.database.write(schedule)
-    active = await app.jobs.claim(app.clock.now(), ("compact",))
+    active = await app.jobs.claim(app.clock.now(), ("backup",))
     assert active is not None
     await app.database.write(schedule)
     await app.database.write(schedule)
     await app.jobs.finish(active, app.clock.now())
-    followup = await app.jobs.claim(app.clock.now(), ("compact",))
-    assert followup is not None
-    assert followup.id == active.id
-    assert followup.attempts == 1
-    await app.jobs.finish(followup, app.clock.now())
-    assert await app.jobs.claim(app.clock.now(), ("compact",)) is None
+    assert await app.jobs.claim(app.clock.now(), ("backup",)) is None
+    assert await scalar(app, "SELECT COUNT(*) FROM scheduled_jobs") == 1
 
 
 async def test_expired_lease_cannot_renew_or_finish_new_owner(app: Application) -> None:
     async def schedule(tx: Transaction) -> None:
         await app.jobs.schedule(
-            tx, "compact", "lease-test", app.clock.now(), app.clock.now()
+            tx, "backup", "lease-test", app.clock.now(), app.clock.now()
         )
 
     await app.database.write(schedule)
-    old = await app.jobs.claim(app.clock.now(), ("compact",))
+    old = await app.jobs.claim(app.clock.now(), ("backup",))
     assert old is not None
     app.clock.advance(121)
     assert not await app.jobs.renew(old, app.clock.now())
-    current = await app.jobs.claim(app.clock.now(), ("compact",))
+    current = await app.jobs.claim(app.clock.now(), ("backup",))
     assert current is not None
     assert old.lease_token != current.lease_token
     await app.jobs.finish(old, app.clock.now())
     assert await scalar(app, "SELECT status FROM scheduled_jobs") == "running"
     await app.jobs.finish(current, app.clock.now())
     assert await scalar(app, "SELECT status FROM scheduled_jobs") == "done"
+
+
+async def test_reconcile_recovers_pending_input_after_a_completed_job(
+    app: Application,
+) -> None:
+    await app.telegram.ingest([update(1, "hello")])
+    job = await app.jobs.claim(app.clock.now(), ("turn",))
+    assert job is not None
+    await app.jobs.finish(job, app.clock.now())
+    await app.jobs.reconcile_turns(app.clock.now())
+    await app.turn_worker.run_once()
+    await app.delivery.run_once()
+    assert len(app.sender.sent) == 1
+    assert await scalar(app, "SELECT pending FROM messages WHERE role='user'") == 0
+
+
+async def test_reconcile_waits_for_kill_switch_and_then_resumes_pending_input(
+    app: Application,
+) -> None:
+    await app.telegram.ingest([update(1, "hello")])
+    job = await app.jobs.claim(app.clock.now(), ("turn",))
+    assert job is not None
+    await app.jobs.finish(job, app.clock.now())
+    await app.delivery_repository.kill_switch(True)
+    await app.jobs.reconcile_turns(app.clock.now())
+    assert await app.jobs.claim(app.clock.now(), ("turn",)) is None
+    await app.delivery_repository.kill_switch(False)
+    await app.jobs.reconcile_turns(app.clock.now())
+    await app.turn_worker.run_once()
+    await app.delivery.run_once()
+    assert len(app.sender.sent) == 1
+
+
+async def test_reconcile_does_not_revive_exhausted_infrastructure_jobs(
+    app: Application,
+) -> None:
+    await app.telegram.ingest([update(1, "hello")])
+    job = await app.jobs.claim(app.clock.now(), ("turn",))
+    assert job is not None
+    await app.jobs.finish(job, app.clock.now(), "STORAGE_FAILURE", permanent=True)
+    await app.jobs.reconcile_turns(app.clock.now())
+    assert await app.jobs.claim(app.clock.now(), ("turn",)) is None

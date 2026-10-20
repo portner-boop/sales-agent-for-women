@@ -6,14 +6,9 @@ from pathlib import Path
 from typing import Any
 
 from app.application import Application
-from app.evaluation import evaluate_cases
 from app.modules.agent.entities import SchemaT
-from app.modules.agent.gateway import GatewayModel
-from app.modules.agent.prompts import INTERPRETER_RULES
-from app.modules.agent.schemas import TurnInterpretation
 from app.modules.delivery.entities import SendResult
-from app.modules.memory.entities import CompactionBlock
-from app.modules.memory.schemas import EpisodeSummary
+from app.modules.dialogue.runner import EvaluationOptions, run_evaluation
 from app.shared.config import load_settings
 from app.shared.control import request_control
 from app.shared.operations import (
@@ -39,67 +34,27 @@ class InactiveModel:
     ) -> SchemaT:
         raise RuntimeError("LLM is disabled in maintenance mode")
 
-    async def summarize(
-        self, block: CompactionBlock, deadline_seconds: float, output_tokens: int
-    ) -> EpisodeSummary:
-        raise RuntimeError("LLM is disabled in maintenance mode")
-
 
 async def execute(arguments: argparse.Namespace) -> None:
     settings = load_settings(arguments.settings)
-    if arguments.command == "probe":
-        settings.require_credentials(telegram=False)
-        model = GatewayModel(settings.llm, 1)
-        result = await model.complete(
-            "interpret",
-            INTERPRETER_RULES,
-            {
-                "CURRENT_INPUT": [
-                    {
-                        "id": "probe-message",
-                        "version": 1,
-                        "role": "user",
-                        "text": "Hello, I would like a short chat.",
-                    }
-                ],
-                "REFERENCE_MESSAGES": [],
-                "RECENT_MESSAGES": [],
-                "facts": [],
-                "entities": [],
-                "language": "en",
-            },
-            TurnInterpretation,
-            15,
+    if arguments.command in {"probe", "evaluate"}:
+        live = arguments.command == "probe" or arguments.live
+        if live:
+            settings.require_credentials(telegram=False)
+        result = await run_evaluation(
+            EvaluationOptions(
+                family="quality" if arguments.command == "probe" else arguments.cases,
+                output=arguments.report,
+                limit=1 if arguments.command == "probe" else arguments.limit,
+                live=live,
+                max_calls=2 if arguments.command == "probe" else arguments.max_calls,
+                concurrency=(
+                    1 if arguments.command == "probe" else arguments.concurrency
+                ),
+            ),
+            settings=settings,
         )
-        print(
-            json.dumps(
-                {
-                    "model": settings.llm.model,
-                    "base_url": settings.llm.base_url,
-                    "structured_mode": settings.llm.structured_mode,
-                    "result": result.model_dump(),
-                }
-            )
-        )
-        return
-    if arguments.command == "evaluate":
-        settings.require_credentials(telegram=False)
-        evaluation_result = await evaluate_cases(
-            settings,
-            GatewayModel(settings.llm, settings.runtime.llm_concurrency),
-            arguments.cases,
-            arguments.report,
-            arguments.case,
-        )
-        print(
-            json.dumps(
-                {
-                    "report": str(arguments.report.resolve()),
-                    "accepted": evaluation_result["accepted"],
-                    "total": evaluation_result["total"],
-                }
-            )
-        )
+        print(result.model_dump_json())
         return
     if arguments.command == "verify-backup":
         print(json.dumps(verify_backup(arguments.path)))
@@ -133,19 +88,33 @@ def main() -> None:
     parser = argparse.ArgumentParser(prog="manage.py")
     parser.add_argument("--settings", type=Path)
     commands = parser.add_subparsers(dest="command", required=True)
-    for name in ("probe", "metrics", "backup"):
+    for name in ("metrics", "backup"):
         commands.add_parser(name)
     for name in ("restore", "verify-backup"):
         commands.add_parser(name).add_argument("path", type=Path)
     commands.add_parser("kill-switch").add_argument("enabled", choices=("on", "off"))
+    probe = commands.add_parser("probe")
+    probe.add_argument("--report", type=Path, default=Path("reports/probe.jsonl"))
     evaluate = commands.add_parser("evaluate")
     evaluate.add_argument(
-        "--cases", type=Path, default=Path("docs/regression_cases.jsonl")
+        "--cases",
+        choices=(
+            "quality",
+            "conversations",
+            "identity",
+            "identity-chain",
+            "languages",
+            "all",
+        ),
+        default="quality",
     )
     evaluate.add_argument(
-        "--report", type=Path, default=Path("reports/gateway-evaluation.json")
+        "--report", type=Path, default=Path("reports/evaluation.jsonl")
     )
-    evaluate.add_argument("--case")
+    evaluate.add_argument("--limit", type=int)
+    evaluate.add_argument("--max-calls", type=int, default=2500)
+    evaluate.add_argument("--concurrency", type=int, default=1)
+    evaluate.add_argument("--live", action="store_true")
     logging.basicConfig(level=logging.INFO, format="%(levelname)s %(name)s %(message)s")
     try:
         asyncio.run(execute(parser.parse_args()))

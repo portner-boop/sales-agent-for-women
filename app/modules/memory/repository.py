@@ -2,10 +2,7 @@ import json
 from typing import Any
 from uuid import uuid4
 
-from app.modules.memory.entities import CompactionBlock
 from app.modules.memory.schemas import (
-    EntityCandidate,
-    EpisodeSummary,
     MemoryOperation,
 )
 from app.shared.entities import EvidenceError, ScopeContext
@@ -24,24 +21,15 @@ class MemoryRepository:
 
     async def metrics(self) -> dict[str, int]:
         async with self.database.read() as tx:
-            summaries = await fetchone(
-                tx,
-                "SELECT SUM(status='current') current_count,SUM(status='stale') stale_count FROM memory_summaries",
-            )
             messages = await fetchone(tx, "SELECT COUNT(*) count FROM messages")
-            covered = await fetchone(
+            facts = await fetchone(
                 tx,
-                "SELECT COUNT(DISTINCT ss.message_id) count FROM summary_sources ss JOIN memory_summaries s ON ss.summary_id=s.id JOIN messages m ON ss.message_id=m.id AND ss.message_version=m.current_version WHERE s.status='current'",
+                "SELECT COUNT(*) count FROM memory_items WHERE validity_status='current'",
             )
-            assert (
-                summaries is not None and messages is not None and covered is not None
-            )
+            assert messages is not None and facts is not None
             return {
-                "current_summaries": int(summaries["current_count"] or 0),
-                "stale_summaries": int(summaries["stale_count"] or 0),
                 "source_messages": messages["count"],
-                "summarized_messages": covered["count"],
-                "uncovered_messages": messages["count"] - covered["count"],
+                "current_facts": facts["count"],
             }
 
     async def ensure_entities(self, tx: Transaction, scope: ScopeContext) -> None:
@@ -63,14 +51,6 @@ class MemoryRepository:
                     (scope.scope_id, scope.epoch),
                 )
             ]
-
-    async def add_entity(
-        self, tx: Transaction, scope: ScopeContext, candidate: EntityCandidate
-    ) -> None:
-        await tx.execute(
-            "INSERT OR IGNORE INTO entities(id,scope_id,epoch,kind,name) VALUES(?,?,?,?,?)",
-            (candidate.id, scope.scope_id, scope.epoch, candidate.kind, candidate.name),
-        )
 
     async def items(
         self, scope: ScopeContext, history: bool = False, tx: Transaction | None = None
@@ -177,7 +157,6 @@ class MemoryRepository:
                 "UPDATE memory_items SET validity_status='retracted' WHERE id=?",
                 (target["id"],),
             )
-            await self.invalidate_fact_summaries(tx, scope, target["id"])
             return str(target["id"])
         value_json = json.dumps(operation.value, ensure_ascii=False, sort_keys=True)
         qualifiers_json = json.dumps(operation.qualifiers, sort_keys=True)
@@ -221,7 +200,6 @@ class MemoryRepository:
                     "UPDATE memory_items SET validity_status='superseded' WHERE id=?",
                     (target["id"],),
                 )
-                await self.invalidate_fact_summaries(tx, scope, target["id"])
             await tx.execute(
                 "INSERT INTO memory_items VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
                 (
@@ -256,14 +234,6 @@ class MemoryRepository:
             )
         return identifier
 
-    async def invalidate_fact_summaries(
-        self, tx: Transaction, scope: ScopeContext, memory_id: str
-    ) -> None:
-        await tx.execute(
-            "UPDATE memory_summaries SET status='stale' WHERE scope_id=? AND epoch=? AND id IN (SELECT ss.summary_id FROM summary_sources ss JOIN memory_sources ms ON ss.message_id=ms.message_id AND ss.message_version=ms.message_version WHERE ms.memory_id=?)",
-            (scope.scope_id, scope.epoch, memory_id),
-        )
-
     async def invalidate_source(
         self, tx: Transaction, scope: ScopeContext, message_id: str
     ) -> None:
@@ -272,146 +242,13 @@ class MemoryRepository:
             (scope.scope_id, scope.epoch, message_id),
         )
         await tx.execute(
-            "UPDATE memory_summaries SET status='stale' WHERE scope_id=? AND epoch=? AND id IN (SELECT summary_id FROM summary_sources WHERE message_id=?)",
-            (scope.scope_id, scope.epoch, message_id),
-        )
-        await tx.execute(
             "UPDATE conversations SET memory_revision=memory_revision+1 WHERE id=?",
             (scope.scope_id,),
         )
 
-    async def summaries(
-        self, scope: ScopeContext, topics: list[str], subjects: list[str]
-    ) -> list[dict[str, Any]]:
-        async with self.database.read() as tx:
-            await require_scope(tx, scope)
-            rows = await fetchall(
-                tx,
-                "SELECT * FROM memory_summaries WHERE scope_id=? AND epoch=? AND status='current' ORDER BY last_sequence DESC",
-                (scope.scope_id, scope.epoch),
-            )
-            result = []
-            for row in rows:
-                payload = json.loads(row["payload_json"])
-                topic_match = bool(set(topics).intersection(payload["topic_kinds"]))
-                subject_match = bool(set(subjects).intersection(payload["subject_ids"]))
-                rank = (
-                    0
-                    if topic_match and subject_match
-                    else 1 if topic_match else 2 if subject_match else 3
-                )
-                result.append(
-                    {
-                        "id": row["id"],
-                        "first_sequence": row["first_sequence"],
-                        "last_sequence": row["last_sequence"],
-                        "payload": payload,
-                        "relevant": rank < 3,
-                        "rank": rank,
-                    }
-                )
-            return sorted(
-                result, key=lambda item: (item["rank"], -item["last_sequence"])
-            )
-
-    async def covered_ids(self, scope: ScopeContext) -> set[str]:
-        async with self.database.read() as tx:
-            await require_scope(tx, scope)
-            rows = await fetchall(
-                tx,
-                "SELECT ss.message_id FROM summary_sources ss JOIN memory_summaries s ON s.id=ss.summary_id WHERE s.scope_id=? AND s.epoch=? AND s.status='current'",
-                (scope.scope_id, scope.epoch),
-            )
-            return {str(row["message_id"]) for row in rows}
-
-    async def publish_summary(
-        self,
-        scope: ScopeContext,
-        block: CompactionBlock,
-        summary: EpisodeSummary,
-        now: float,
-    ) -> str:
-        async def publish(tx: Transaction) -> str:
-            await require_scope(tx, scope)
-            expected = {message.id for message in block.messages}
-            if set(summary.covered_message_ids) != expected or len(
-                summary.covered_message_ids
-            ) != len(expected):
-                raise EvidenceError("Summary coverage does not match the block")
-            for message in block.messages:
-                row = await fetchone(
-                    tx,
-                    "SELECT current_version FROM messages WHERE id=? AND scope_id=? AND epoch=?",
-                    (message.id, scope.scope_id, scope.epoch),
-                )
-                if row is None or row["current_version"] != message.version:
-                    raise EvidenceError("Summary source was edited")
-            claims = []
-            for claim in summary.claims:
-                statuses: list[str] = []
-                for source in claim.sources:
-                    rows = await fetchall(
-                        tx,
-                        "SELECT validity_status FROM memory_items m JOIN memory_sources s ON s.memory_id=m.id WHERE m.scope_id=? AND m.epoch=? AND s.message_id=? AND s.message_version=?",
-                        (
-                            scope.scope_id,
-                            scope.epoch,
-                            source.message_id,
-                            source.message_version,
-                        ),
-                    )
-                    statuses.extend(row["validity_status"] for row in rows)
-                status = (
-                    "disputed"
-                    if "disputed" in statuses
-                    else (
-                        "historical"
-                        if any(value != "current" for value in statuses)
-                        else "current"
-                    )
-                )
-                claims.append(claim.model_copy(update={"validity_status": status}))
-            published = summary.model_copy(update={"claims": claims})
-            identifier = uuid4().hex
-            existing = await fetchone(
-                tx,
-                "SELECT id FROM memory_summaries WHERE scope_id=? AND epoch=? AND source_hash=? AND status='current'",
-                (scope.scope_id, scope.epoch, block.source_hash),
-            )
-            if existing:
-                return str(existing["id"])
-            await tx.execute(
-                "INSERT INTO memory_summaries VALUES(?,?,?,?,?,?,?,'current',?)",
-                (
-                    identifier,
-                    scope.scope_id,
-                    scope.epoch,
-                    published.model_dump_json(),
-                    block.messages[0].sequence,
-                    block.messages[-1].sequence,
-                    block.source_hash,
-                    now,
-                ),
-            )
-            for message in block.messages:
-                await tx.execute(
-                    "INSERT INTO summary_sources VALUES(?,?,?,?,?)",
-                    (
-                        identifier,
-                        scope.scope_id,
-                        scope.epoch,
-                        message.id,
-                        message.version,
-                    ),
-                )
-            return identifier
-
-        return await self.database.write(publish)
-
     async def purge(
         self, tx: Transaction, scope_id: str, new_epoch: int, now: float
     ) -> None:
-        await tx.execute("DELETE FROM memory_summaries WHERE scope_id=?", (scope_id,))
         await tx.execute(
             "UPDATE memory_items SET supersedes_id=NULL WHERE scope_id=?", (scope_id,)
         )

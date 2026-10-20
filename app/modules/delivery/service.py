@@ -13,7 +13,6 @@ from app.modules.delivery.entities import (
     TypingSender,
 )
 from app.modules.delivery.repository import DeliveryRepository
-from app.modules.jobs.repository import JobRepository
 from app.shared.entities import Clock
 from app.shared.storage import Transaction
 
@@ -26,7 +25,6 @@ class DeliveryService:
         repository: DeliveryRepository,
         conversations: ConversationRepository,
         commerce: CommerceService,
-        jobs: JobRepository,
         sender: ChannelSender,
         clock: Clock,
         after_reply: (
@@ -36,7 +34,6 @@ class DeliveryService:
         self.repository = repository
         self.conversations = conversations
         self.commerce = commerce
-        self.jobs = jobs
         self.sender = sender
         self.clock = clock
         self.after_reply = after_reply
@@ -54,7 +51,9 @@ class DeliveryService:
         try:
             await task
         except asyncio.CancelledError:
-            await asyncio.shield(self.repository.interrupt_send(identifier))
+            await asyncio.shield(
+                self.repository.interrupt_send(identifier, self.clock.now())
+            )
             parent = asyncio.current_task()
             if parent is not None and parent.cancelling():
                 raise
@@ -94,9 +93,8 @@ class DeliveryService:
                 and message.proposal.get("origin") == "platform_redirect"
             ):
                 if (
-                    not self.commerce.preview_closed(conversation)
+                    conversation.invitation_state != "planned"
                     or conversation.control_state != "enabled"
-                    or conversation.purchase_state == "confirmed"
                     or not await self.commerce.repository.transition_allowed(
                         tx, conversation.scope
                     )
@@ -129,7 +127,7 @@ class DeliveryService:
             conversation = await self.conversations.get(message.scope.scope_id, tx)
             if conversation.scope != message.scope:
                 return
-            await self.repository.outcome(
+            recorded = await self.repository.outcome(
                 tx,
                 message,
                 result.status,
@@ -138,6 +136,8 @@ class DeliveryService:
                 result.error_code,
                 result.retry_after,
             )
+            if not recorded:
+                return
             await tx.execute(
                 "UPDATE outbox_messages SET proposal_json=json_set(proposal_json,'$.transport_seconds',?) WHERE id=?",
                 (asyncio.get_running_loop().time() - transport_started, message.id),
@@ -160,34 +160,14 @@ class DeliveryService:
                         "UPDATE conversations SET first_reply_at=COALESCE(first_reply_at,?) WHERE id=?",
                         (self.clock.now(), conversation.id),
                     )
-                    if (
-                        self.commerce.settings.preview_enabled
-                        and message.predecessor_id is None
-                        and message.turn_id is not None
-                        and message.proposal.get("origin") != "followup"
-                    ):
-                        await self.commerce.repository.count_reply(tx, message.scope)
                 if message.kind == "reply" and not await self.repository.has_successor(
                     tx, message.id
                 ):
-                    if self.after_reply is not None:
-                        await self.after_reply(tx, conversation, message)
-                    await self.jobs.schedule(
-                        tx,
-                        "compact",
-                        f"compact:{conversation.id}:{conversation.epoch}",
-                        self.clock.now(),
-                        self.clock.now(),
-                        message.scope,
-                    )
-                if message.kind == "handoff":
-                    await self.commerce.repository.record_handoff(
-                        tx, message.scope, message.text
-                    )
-                    await tx.execute(
-                        "UPDATE conversations SET handoff_state='delivered' WHERE id=?",
-                        (conversation.id,),
-                    )
+                    current = await self.conversations.get(conversation.id, tx)
+                    if self.after_reply is not None and self.commerce.can_reply(
+                        current
+                    ):
+                        await self.after_reply(tx, current, message)
 
         await self.repository.database.write(record)
         logger.info("delivery action=%s status=%s", message.id, result.status)
@@ -245,5 +225,9 @@ class DeliveryService:
 
     async def run(self) -> None:
         while True:
-            if not await self.run_once():
-                await asyncio.sleep(0.1)
+            try:
+                if not await self.run_once():
+                    await asyncio.sleep(0.1)
+            except Exception:
+                logger.exception("delivery_worker_iteration_failed")
+                await asyncio.sleep(1)

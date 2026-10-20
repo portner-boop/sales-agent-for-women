@@ -1,34 +1,27 @@
 import random
+from collections.abc import Callable
 
-from app.shared.config import RuntimeSettings
-
-
-def message_delay(text: str, settings: RuntimeSettings) -> float:
-    pause = random.uniform(
-        settings.reply_pause_min_seconds, settings.reply_pause_max_seconds
-    )
-    jitter = random.uniform(
-        1 - settings.reply_delay_jitter_ratio, 1 + settings.reply_delay_jitter_ratio
-    )
-    seconds = (pause + len(text) / settings.reply_typing_chars_per_second) * jitter
-    return min(
-        settings.reply_delay_max_seconds, max(settings.reply_delay_min_seconds, seconds)
-    )
+from app.shared.config import ReplyTimingSettings
 
 
-def response_delays(
-    texts: tuple[str, ...],
-    received_at: float,
-    now: float,
-    first_reply: bool,
-    settings: RuntimeSettings,
-) -> tuple[float, ...]:
-    if not settings.reply_pacing_enabled:
-        return (0,) + tuple(
-            random.uniform(
-                settings.reply_pause_min_seconds, settings.reply_pause_max_seconds
-            )
-            for _ in texts[1:]
+class DeliveryTiming:
+    def __init__(
+        self,
+        settings: ReplyTimingSettings,
+        uniform: Callable[[float, float], float] = random.uniform,
+    ) -> None:
+        self.settings, self.uniform = settings, uniform
+
+    def duration(self, text: str) -> float:
+        if not self.settings.enabled:
+            return 0
+        pause = self.uniform(
+            self.settings.pause_min_seconds, self.settings.pause_max_seconds
         )
-    intervals = tuple(message_delay(text, settings) for text in texts)
-    return (max(0, received_at + intervals[0] - now),) + intervals[1:]
+        jitter = self.uniform(
+            1 - self.settings.jitter_fraction, 1 + self.settings.jitter_fraction
+        )
+        seconds = (pause + len(text) / self.settings.characters_per_second) * jitter
+        return min(
+            self.settings.maximum_seconds, max(self.settings.minimum_seconds, seconds)
+        )

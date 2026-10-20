@@ -1,11 +1,10 @@
 import json
+from time import time
 from typing import Any
 from uuid import uuid4
 
-from pydantic import TypeAdapter, ValidationError
-
-from app.modules.conversations.schemas import QuestionGoal
 from app.modules.delivery.entities import OutboxMessage
+from app.modules.delivery.observations import project_research_delivery
 from app.modules.delivery.schemas import OutboxDraft
 from app.shared.entities import RevisionSnapshot, ScopeContext, StaleStateError
 from app.shared.storage import (
@@ -43,14 +42,14 @@ class DeliveryRepository:
                 or not (
                     draft.kind == "reply"
                     or draft.kind == "service"
-                    and (proposal or {}).get("origin") == "platform_redirect"
+                    and (proposal or {}).get("origin")
+                    in {"platform_redirect", "preview_closing"}
                 )
                 or turn_id is None
                 or predecessor["turn_id"] != turn_id
                 or predecessor["input_revision"] != snapshot.input_revision
                 or predecessor["control_revision"] != snapshot.control_revision
                 or predecessor["memory_revision"] != snapshot.memory_revision
-                or predecessor["deadline"] != draft.deadline
             ):
                 raise StaleStateError("Continuation requires its scoped reply")
         identifier = uuid4().hex
@@ -75,9 +74,19 @@ class DeliveryRepository:
             ),
         )
         row = await fetchone(
-            tx, "SELECT id FROM outbox_messages WHERE action_key=?", (draft.action_key,)
+            tx,
+            "SELECT id,status FROM outbox_messages WHERE action_key=?",
+            (draft.action_key,),
         )
         assert row is not None
+        if row["status"] in {"ready", "sending"} and (
+            (proposal or {}).get("platform_transition") is True
+            or (proposal or {}).get("origin") == "platform_redirect"
+        ):
+            await tx.execute(
+                "UPDATE conversations SET invitation_state='planned' WHERE id=? AND epoch=? AND invitation_state='none'",
+                (snapshot.scope.scope_id, snapshot.scope.epoch),
+            )
         return str(row["id"])
 
     async def ready_ids(self, now: float) -> list[str]:
@@ -99,7 +108,7 @@ class DeliveryRepository:
     ) -> OutboxMessage | None:
         row = await fetchone(
             tx,
-            "SELECT o.*,c.chat_id,c.language,c.control_state,c.purchase_state,c.epoch AS current_epoch,c.input_revision AS current_input,c.control_revision AS current_control,c.memory_revision AS current_memory FROM outbox_messages o JOIN conversations c ON c.id=o.scope_id WHERE o.id=? AND o.status='ready'",
+            "SELECT o.*,c.chat_id,c.language,c.control_state,c.epoch AS current_epoch,c.input_revision AS current_input,c.control_revision AS current_control,c.memory_revision AS current_memory FROM outbox_messages o JOIN conversations c ON c.id=o.scope_id WHERE o.id=? AND o.status='ready'",
             (identifier,),
         )
         if row is None:
@@ -124,38 +133,46 @@ class DeliveryRepository:
             if predecessor["status"] != "delivered":
                 return None
         proposal = json.loads(row["proposal_json"])
-        if proposal.get("question_goal") is not None:
-            try:
-                TypeAdapter(QuestionGoal).validate_python(proposal["question_goal"])
-            except ValidationError:
-                await tx.execute(
-                    "UPDATE outbox_messages SET status='cancelled',error_code='INVALID_QUESTION_GOAL' WHERE id=?",
-                    (identifier,),
-                )
-                await self.cancel_successor(tx, identifier)
-                return None
         stale = (
             row["epoch"] != row["current_epoch"]
             or row["control_revision"] != row["current_control"]
         )
-        if row["kind"] in {"reply", "offer"} or row["turn_id"] is not None:
+        if row["kind"] == "reply" or row["turn_id"] is not None:
             stale = (
                 stale
                 or row["input_revision"] != row["current_input"]
                 or row["memory_revision"] != row["current_memory"]
             )
+        continuation_allowed = False
+        deadline = float(row["deadline"])
+        if row["predecessor_id"] is not None:
+            continuation_allowed = (
+                row["control_state"] == "enabled"
+                and await fetchone(
+                    tx,
+                    "SELECT 1 FROM outgoing_dialogue_turns WHERE turn_id=? AND scope_id=? AND epoch=? AND outcome='delivered'",
+                    (row["turn_id"], row["scope_id"], row["epoch"]),
+                )
+                is not None
+            )
+        if (
+            now >= row["deadline"]
+            and not stale
+            and not kill_switch
+            and (can_reply or continuation_allowed or row["kind"] == "service")
+            and not proposal.get("hard_deadline")
+            and row["attempts"] < 3
+        ):
+            await tx.execute(
+                "UPDATE outbox_messages SET deadline=? WHERE id=?",
+                (now + 30, identifier),
+            )
+            deadline = now + 30
         blocked = (
             kill_switch
             or stale
-            or now >= row["deadline"]
-            or (row["kind"] == "reply" and not can_reply)
-        )
-        blocked = blocked or (
-            row["kind"] == "offer"
-            and (
-                row["control_state"] != "enabled"
-                or row["purchase_state"] == "confirmed"
-            )
+            or now >= deadline
+            or (row["kind"] == "reply" and not can_reply and not continuation_allowed)
         )
         if blocked:
             await tx.execute(
@@ -163,6 +180,7 @@ class DeliveryRepository:
                 (identifier,),
             )
             await self.cancel_successor(tx, identifier)
+            await self._release_invitation(tx, row["scope_id"], row["epoch"])
             return None
         if now < row["created_at"]:
             return None
@@ -180,7 +198,7 @@ class DeliveryRepository:
             text,
             proposal,
             row["attempts"] + 1,
-            row["deadline"],
+            deadline,
             row["predecessor_id"],
         )
 
@@ -191,7 +209,7 @@ class DeliveryRepository:
             )
             return str(row["scope_id"]) if row else None
 
-    async def interrupt_send(self, identifier: str) -> None:
+    async def interrupt_send(self, identifier: str, now: float | None = None) -> None:
         async def interrupt(tx: Transaction) -> None:
             result = await tx.execute(
                 "UPDATE outbox_messages SET status='delivery_unknown',error_code='SEND_INTERRUPTED' WHERE id=? AND status='sending'",
@@ -199,6 +217,19 @@ class DeliveryRepository:
             )
             if result.rowcount:
                 await self.cancel_successor(tx, identifier)
+                await self._record_outcome(
+                    tx,
+                    identifier,
+                    "delivery_unknown",
+                    now if now is not None else time(),
+                )
+                scope = await fetchone(
+                    tx,
+                    "SELECT scope_id,epoch FROM outbox_messages WHERE id=?",
+                    (identifier,),
+                )
+                assert scope is not None
+                await self._release_invitation(tx, scope["scope_id"], scope["epoch"])
 
         await self.database.write(interrupt)
 
@@ -211,13 +242,13 @@ class DeliveryRepository:
         external_id: int | None,
         code: str | None,
         retry_after: float,
-    ) -> None:
+    ) -> bool:
         stored_status = (
             "ready"
             if status == "retryable_failure" and message.attempts < 3
             else "permanent_failure" if status == "retryable_failure" else status
         )
-        await tx.execute(
+        cursor = await tx.execute(
             "UPDATE outbox_messages SET status=?,created_at=?,external_message_id=?,error_code=? WHERE id=? AND status='sending'",
             (
                 stored_status,
@@ -227,28 +258,126 @@ class DeliveryRepository:
                 message.id,
             ),
         )
+        if not cursor.rowcount:
+            return False
         if stored_status == "delivered":
             await tx.execute(
-                "UPDATE outbox_messages SET created_at=?+COALESCE(message_delay_seconds,delay_seconds),deadline=CASE WHEN message_delay_seconds IS NOT NULL THEN MAX(deadline,?+message_delay_seconds+30) ELSE deadline END WHERE predecessor_id=? AND status='ready'",
+                "UPDATE outbox_messages SET created_at=?+COALESCE(message_delay_seconds,delay_seconds),deadline=CASE WHEN message_delay_seconds IS NOT NULL AND COALESCE(json_extract(proposal_json,'$.hard_deadline'),0)=0 THEN MAX(deadline,?+message_delay_seconds+30) ELSE deadline END WHERE predecessor_id=? AND status='ready'",
                 (now, now, message.id),
             )
         elif stored_status in {"permanent_failure", "delivery_unknown"}:
             await self.cancel_successor(tx, message.id)
+            await self._release_invitation(
+                tx, message.scope.scope_id, message.scope.epoch
+            )
+        await self._record_outcome(tx, message.id, stored_status, now)
+        return True
+
+    async def _record_outcome(
+        self, tx: Transaction, identifier: str, status: str, now: float
+    ) -> None:
+        row = await fetchone(
+            tx,
+            "SELECT o.* FROM outbox_messages o JOIN conversations c ON c.id=o.scope_id AND c.epoch=o.epoch WHERE o.id=?",
+            (identifier,),
+        )
+        if row is None:
+            return
+        if status in {"delivered", "permanent_failure", "delivery_unknown"}:
+            await tx.execute(
+                "UPDATE outbox_messages SET proposal_json=json_set(proposal_json,'$.delivery_finished_at',COALESCE(json_extract(proposal_json,'$.delivery_finished_at'),?)) WHERE id=?",
+                (now, identifier),
+            )
+        proposal = json.loads(row["proposal_json"])
+        run_id = proposal.get("research_run_id")
+        if isinstance(run_id, str):
+            await project_research_delivery(tx, run_id)
+        if (
+            status in {"delivered", "delivery_unknown"}
+            and row["kind"] == "reply"
+            and row["turn_id"] is not None
+            and proposal.get("origin") != "followup"
+        ):
+            cursor = await tx.execute(
+                "INSERT OR IGNORE INTO outgoing_dialogue_turns(turn_id,scope_id,epoch,outcome,recorded_at) VALUES(?,?,?,?,?)",
+                (
+                    row["turn_id"],
+                    row["scope_id"],
+                    row["epoch"],
+                    "delivered" if status == "delivered" else "unknown",
+                    now,
+                ),
+            )
+            if cursor.rowcount:
+                await tx.execute(
+                    "UPDATE conversations SET preview_reply_count=preview_reply_count+1,pending_outgoing_turn_id=CASE WHEN ?='delivered' THEN ? ELSE pending_outgoing_turn_id END WHERE id=? AND epoch=?",
+                    (status, row["turn_id"], row["scope_id"], row["epoch"]),
+                )
+        invitation = (
+            proposal.get("origin") == "platform_redirect"
+            or proposal.get("platform_transition") is True
+        )
+        if status == "delivered" and invitation:
+            await tx.execute(
+                "UPDATE conversations SET invitation_state='delivered',preview_closed_at=COALESCE(preview_closed_at,?) WHERE id=? AND epoch=?",
+                (now, row["scope_id"], row["epoch"]),
+            )
+        elif status == "delivery_unknown" and invitation:
+            await tx.execute(
+                "UPDATE conversations SET invitation_state='unknown' WHERE id=? AND epoch=? AND invitation_state!='delivered'",
+                (row["scope_id"], row["epoch"]),
+            )
+        if row["turn_id"] is not None:
+            turn_status = {
+                "permanent_failure": "delivery_failed",
+                "delivery_unknown": "delivery_unknown",
+            }.get(status)
+            if turn_status is not None:
+                await tx.execute(
+                    "UPDATE turns SET status=? WHERE id=? AND scope_id=? AND epoch=?",
+                    (turn_status, row["turn_id"], row["scope_id"], row["epoch"]),
+                )
+            elif status == "delivered":
+                await tx.execute(
+                    "UPDATE turns SET status='delivered' WHERE id=? AND scope_id=? AND epoch=? AND NOT EXISTS(SELECT 1 FROM outbox_messages WHERE turn_id=? AND scope_id=? AND epoch=? AND status!='delivered')",
+                    (
+                        row["turn_id"],
+                        row["scope_id"],
+                        row["epoch"],
+                        row["turn_id"],
+                        row["scope_id"],
+                        row["epoch"],
+                    ),
+                )
+
+    async def _release_invitation(
+        self, tx: Transaction, scope_id: str, epoch: int
+    ) -> None:
+        await tx.execute(
+            "UPDATE conversations SET invitation_state='none' WHERE id=? AND epoch=? AND invitation_state='planned' AND NOT EXISTS(SELECT 1 FROM outbox_messages WHERE scope_id=? AND epoch=? AND status IN ('ready','sending') AND (json_extract(proposal_json,'$.origin')='platform_redirect' OR json_extract(proposal_json,'$.platform_transition')=1))",
+            (scope_id, epoch, scope_id, epoch),
+        )
 
     async def cancel_successor(self, tx: Transaction, identifier: str) -> None:
         await tx.execute(
             "WITH RECURSIVE descendants(id) AS (SELECT id FROM outbox_messages WHERE predecessor_id=? UNION SELECT o.id FROM outbox_messages o JOIN descendants d ON o.predecessor_id=d.id) UPDATE outbox_messages SET status='cancelled',error_code='PREDECESSOR_NOT_DELIVERED' WHERE id IN (SELECT id FROM descendants) AND status='ready'",
             (identifier,),
         )
+        row = await fetchone(
+            tx, "SELECT scope_id,epoch FROM outbox_messages WHERE id=?", (identifier,)
+        )
+        if row is not None:
+            await self._release_invitation(tx, row["scope_id"], row["epoch"])
 
     async def cancel_pending(
         self, tx: Transaction, scope: ScopeContext, code: str
     ) -> None:
         await require_scope(tx, scope)
         await tx.execute(
-            "UPDATE outbox_messages SET status='cancelled',error_code=? WHERE scope_id=? AND epoch=? AND status='ready' AND (kind IN ('reply','offer') OR turn_id IS NOT NULL)",
+            "UPDATE outbox_messages SET status='cancelled',error_code=? WHERE scope_id=? AND epoch=? AND status='ready' AND (kind='reply' OR turn_id IS NOT NULL)",
             (code, scope.scope_id, scope.epoch),
         )
+        await self._release_invitation(tx, scope.scope_id, scope.epoch)
 
     async def cancel_followups(self, tx: Transaction, scope: ScopeContext) -> None:
         await require_scope(tx, scope)
@@ -285,19 +414,36 @@ class DeliveryRepository:
         async with self.database.read() as tx:
             rows = await fetchall(
                 tx,
-                "SELECT o.id,o.scope_id,c.chat_id FROM outbox_messages o LEFT JOIN outbox_messages p ON p.id=o.predecessor_id JOIN conversations c ON c.id=o.scope_id WHERE o.status='ready' AND (o.predecessor_id IS NULL OR p.status='delivered') AND (o.kind IN ('reply','offer') OR o.turn_id IS NOT NULL) AND o.created_at>? AND o.deadline>? AND o.epoch=c.epoch AND o.input_revision=c.input_revision AND o.control_revision=c.control_revision AND o.memory_revision=c.memory_revision AND c.control_state='enabled' AND c.purchase_state!='confirmed' AND NOT EXISTS(SELECT 1 FROM runtime_controls WHERE kill_switch=1)",
+                "SELECT o.id,o.scope_id,c.chat_id FROM outbox_messages o LEFT JOIN outbox_messages p ON p.id=o.predecessor_id JOIN conversations c ON c.id=o.scope_id WHERE o.status='ready' AND (o.predecessor_id IS NULL OR p.status='delivered') AND (o.kind='reply' OR o.turn_id IS NOT NULL) AND o.created_at>? AND o.deadline>? AND o.epoch=c.epoch AND o.input_revision=c.input_revision AND o.control_revision=c.control_revision AND o.memory_revision=c.memory_revision AND c.control_state='enabled' AND NOT EXISTS(SELECT 1 FROM runtime_controls WHERE kill_switch=1)",
                 (now, now),
             )
             return [(row["id"], row["scope_id"], row["chat_id"]) for row in rows]
 
-    async def recover(self) -> None:
+    async def recover(self, now: float | None = None) -> None:
         async def recover(tx: Transaction) -> None:
+            sending = await fetchall(
+                tx,
+                "SELECT id FROM outbox_messages WHERE status IN ('sending','delivery_unknown')",
+            )
             await tx.execute(
                 "UPDATE outbox_messages SET status='delivery_unknown',error_code='PROCESS_INTERRUPTED' WHERE status='sending'"
             )
             await tx.execute(
                 "WITH RECURSIVE blocked(id) AS (SELECT id FROM outbox_messages WHERE status IN ('cancelled','permanent_failure','delivery_unknown') UNION SELECT o.id FROM outbox_messages o JOIN blocked b ON o.predecessor_id=b.id) UPDATE outbox_messages SET status='cancelled',error_code='PREDECESSOR_NOT_DELIVERED' WHERE status='ready' AND id IN (SELECT id FROM blocked)"
             )
+            for row in sending:
+                await self._record_outcome(
+                    tx,
+                    row["id"],
+                    "delivery_unknown",
+                    now if now is not None else time(),
+                )
+            planned = await fetchall(
+                tx,
+                "SELECT id,epoch FROM conversations WHERE invitation_state='planned'",
+            )
+            for row in planned:
+                await self._release_invitation(tx, row["id"], row["epoch"])
 
         await self.database.write(recover)
 
@@ -313,6 +459,12 @@ class DeliveryRepository:
                 await tx.execute(
                     "UPDATE outbox_messages SET status='cancelled',error_code='KILL_SWITCH' WHERE status='ready'"
                 )
+                rows = await fetchall(
+                    tx,
+                    "SELECT id,epoch FROM conversations WHERE invitation_state='planned'",
+                )
+                for row in rows:
+                    await self._release_invitation(tx, row["id"], row["epoch"])
 
         await self.database.write(update)
 

@@ -1,0 +1,80 @@
+[
+  {
+    "id": "flirt-1",
+    "steps": [
+      {
+        "message": "hey handsome :) i saw your photo and couldnt resist to write",
+        "language": "en"
+      },
+      {
+        "message": "only charming? i was hoping you would say something more about me ;)",
+        "language": "en"
+      }
+    ]
+  },
+  {
+    "id": "flirt-2",
+    "steps": [
+      {
+        "message": "Okay I wasnt going to message first but your picture changed my mind",
+        "language": "en"
+      },
+      {
+        "message": "Is that all? You can flirt with me, I wont bite",
+        "language": "en"
+      }
+    ]
+  },
+  {
+    "id": "flirt-3",
+    "steps": [
+      {
+        "message": "You look annoyingly handsome. Had to say it",
+        "language": "en"
+      },
+      {
+        "message": "Go on then, surprise me. And dont describe my confidence",
+        "language": "en"
+      }
+    ]
+  },
+  {
+    "id": "flirt-4",
+    "steps": [
+      {
+        "message": "Увидела твоё фото и не смогла пройти мимо. Красавчик",
+        "language": "ru"
+      },
+      {
+        "message": "Ну и всё? Я вообще-то к тебе заигрываю, Марко",
+        "language": "ru"
+      }
+    ]
+  },
+  {
+    "id": "flirt-5",
+    "steps": [
+      {
+        "message": "Привет. Я после работы никакая, но на тебя сил хватило. Вот так и понимай",
+        "language": "ru"
+      },
+      {
+        "message": "Не делай вид, что не понял. Комплимент это был",
+        "language": "ru"
+      }
+    ]
+  },
+  {
+    "id": "flirt-6",
+    "steps": [
+      {
+        "message": "Hola guapo, vi tu foto y no pude resistirme a escribirte",
+        "language": "es"
+      },
+      {
+        "message": "¿Solo eso? Esperaba que coquetearas un poco conmigo",
+        "language": "es"
+      }
+    ]
+  }
+]

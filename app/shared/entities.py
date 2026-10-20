@@ -20,7 +20,7 @@ class RevisionSnapshot:
     memory_revision: int
 
 
-ActionKind = Literal["reply", "service", "offer", "handoff"]
+ActionKind = Literal["reply", "service"]
 
 
 class StaleStateError(Exception):

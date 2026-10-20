@@ -1,3 +1,4 @@
+import json
 from uuid import uuid4
 
 from app.modules.conversations.entities import Turn
@@ -18,19 +19,21 @@ class FollowupRepository:
         now: float,
         run_at: float,
         expires_at: float,
+        ordinal: int = 1,
+        silence_started_at: float | None = None,
     ) -> str | None:
         await require_scope(tx, scope)
         row = await fetchone(
             tx,
-            "SELECT o.input_revision,o.control_revision,c.processed_sequence FROM outbox_messages o JOIN conversations c ON c.id=o.scope_id WHERE o.id=? AND o.scope_id=? AND o.epoch=? AND o.status='delivered' AND o.input_revision=c.input_revision AND o.control_revision=c.control_revision AND c.control_state='enabled' AND c.dialogue_mode!='closing' AND c.purchase_state!='confirmed' AND NOT EXISTS(SELECT 1 FROM runtime_controls WHERE kill_switch=1) AND NOT EXISTS(SELECT 1 FROM messages WHERE scope_id=c.id AND epoch=c.epoch AND pending=1) AND NOT EXISTS(SELECT 1 FROM memory_items WHERE scope_id=c.id AND epoch=c.epoch AND validity_status='current' AND kind='boundary' AND predicate IN ('proactive_permission','followup_permission','contact_permission') AND value_json='false')",
+            "SELECT o.input_revision,o.control_revision,c.processed_sequence FROM outbox_messages o JOIN conversations c ON c.id=o.scope_id WHERE o.id=? AND o.scope_id=? AND o.epoch=? AND o.status='delivered' AND o.input_revision=c.input_revision AND o.control_revision=c.control_revision AND c.control_state='enabled' AND c.dialogue_mode!='closing' AND NOT EXISTS(SELECT 1 FROM runtime_controls WHERE kill_switch=1) AND NOT EXISTS(SELECT 1 FROM messages WHERE scope_id=c.id AND epoch=c.epoch AND pending=1) AND NOT EXISTS(SELECT 1 FROM memory_items WHERE scope_id=c.id AND epoch=c.epoch AND validity_status='current' AND kind='boundary' AND predicate IN ('proactive_permission','followup_permission','contact_permission') AND value_json='false')",
             (anchor_id, scope.scope_id, scope.epoch),
         )
         if row is None:
             return None
         existing = await fetchone(
             tx,
-            "SELECT id FROM followups WHERE scope_id=? AND epoch=? AND input_revision=?",
-            (scope.scope_id, scope.epoch, row["input_revision"]),
+            "SELECT id FROM followups WHERE scope_id=? AND epoch=? AND input_revision=? AND ordinal=?",
+            (scope.scope_id, scope.epoch, row["input_revision"], ordinal),
         )
         if existing is not None:
             return None
@@ -48,7 +51,7 @@ class FollowupRepository:
             ),
         )
         await tx.execute(
-            "INSERT INTO followups(id,scope_id,epoch,input_revision,control_revision,anchor_id,turn_id,run_at,expires_at) VALUES(?,?,?,?,?,?,?,?,?)",
+            "INSERT INTO followups(id,scope_id,epoch,input_revision,control_revision,anchor_id,turn_id,run_at,expires_at,ordinal,silence_started_at) VALUES(?,?,?,?,?,?,?,?,?,?,?)",
             (
                 identifier,
                 scope.scope_id,
@@ -59,6 +62,8 @@ class FollowupRepository:
                 turn_id,
                 run_at,
                 expires_at,
+                ordinal,
+                now if silence_started_at is None else silence_started_at,
             ),
         )
         return identifier
@@ -70,7 +75,7 @@ class FollowupRepository:
             await require_scope(tx, scope)
             row = await fetchone(
                 tx,
-                "SELECT f.*,c.input_revision AS current_input,c.control_revision AS current_control,c.control_state,c.purchase_state,o.status AS anchor_status FROM followups f JOIN conversations c ON c.id=f.scope_id JOIN outbox_messages o ON o.id=f.anchor_id WHERE f.id=? AND f.scope_id=? AND f.epoch=? AND f.status IN ('pending','generating')",
+                "SELECT f.*,c.input_revision AS current_input,c.control_revision AS current_control,c.control_state,o.status AS anchor_status,o.proposal_json AS anchor_proposal FROM followups f JOIN conversations c ON c.id=f.scope_id JOIN outbox_messages o ON o.id=f.anchor_id WHERE f.id=? AND f.scope_id=? AND f.epoch=? AND f.status IN ('pending','generating')",
                 (identifier, scope.scope_id, scope.epoch),
             )
             if row is None:
@@ -90,7 +95,6 @@ class FollowupRepository:
                 and row["input_revision"] == row["current_input"]
                 and row["control_revision"] == row["current_control"]
                 and row["control_state"] == "enabled"
-                and row["purchase_state"] != "confirmed"
                 and row["anchor_status"] == "delivered"
                 and killed is not None
                 and not killed["kill_switch"]
@@ -112,6 +116,12 @@ class FollowupRepository:
                 row["anchor_id"],
                 row["run_at"],
                 row["expires_at"],
+                row["ordinal"],
+                row["silence_started_at"],
+                row["ordinal"] == 1
+                and isinstance(
+                    json.loads(row["anchor_proposal"]).get("awaiting_user"), bool
+                ),
             )
 
         return await self.database.write(start)

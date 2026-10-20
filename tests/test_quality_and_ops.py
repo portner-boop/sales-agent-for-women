@@ -1,143 +1,11 @@
 import asyncio
-import json
-
-import pytest
 
 from app.application import Application
-from app.modules.agent.errors import ModelOutputError
 from app.modules.delivery.entities import SendResult
 from app.shared.control import request_control
 from app.shared.operations import ProcessLock, restore_backup
 from app.shared.storage import Transaction
 from tests.helpers import FakeSender, conversation, scalar, update
-
-
-@pytest.mark.parametrize(
-    "error", [ModelOutputError("INVALID_JSON"), TimeoutError("timeout")]
-)
-async def test_invalid_json_and_transient_timeouts_recover_before_sending(
-    app: Application, error: Exception
-) -> None:
-    app.model.responses["interpret"].append(error)
-    await app.telegram.ingest([update(1, "hello", user=3)])
-    await app.drain()
-    assert (await conversation(app, 3)).first_reply_at is not None
-    assert await scalar(app, "SELECT kind FROM outbox_messages") == "reply"
-    assert await scalar(app, "SELECT status FROM agent_runs") == "prepared"
-    assert [task for task, _ in app.model.calls][:2] == ["interpret", "interpret"]
-
-
-@pytest.mark.parametrize(
-    "text,user_text",
-    [
-        ("Кофе с мёдом — необычный выбор.", "Кофе с мёдом."),
-        ("That coffee — quite a surprise.", "Coffee with honey."),
-        ("С тобой – спокойно.", "Давай поболтаем."),
-    ],
-)
-async def test_typographic_dash_is_normalized_and_checked_before_sending(
-    app: Application, text: str, user_text: str
-) -> None:
-    app.model.responses["generate"].append({"reply": text, "dialogue_act": "comment"})
-    await app.telegram.ingest([update(1, user_text)])
-    await app.drain()
-    expected = text.translate(str.maketrans("—–", "--")).rstrip(".")
-    assert app.sender.sent == [(1, expected)]
-    checked = next(data for task, data in app.model.calls if task == "validate")
-    assert checked["reply"]["reply"] == expected
-    assert [task for task, _ in app.model.calls] == [
-        "interpret",
-        "generate",
-        "validate",
-    ]
-
-
-async def test_style_repair_is_bounded_and_accepted(app: Application) -> None:
-    app.model.responses["generate"].append(
-        {"reply": "Hello!!! 😊", "dialogue_act": "greet"}
-    )
-    app.model.responses["repair"].append(
-        {"reply": "Glad to hear that.", "dialogue_act": "acknowledge"}
-    )
-    await app.telegram.ingest([update(1, "hello")])
-    await app.drain()
-    assert app.sender.sent[0][1] == "Glad to hear that"
-    assert len(app.model.calls) == 4
-
-
-@pytest.mark.parametrize(
-    "text",
-    [
-        "С тобой -- спокойно.",
-        "Договорились :)",
-        "Договорились)",
-        "Договорились!?",
-        "**Договорились.**",
-        "Договорились 1️⃣",
-    ],
-)
-async def test_dialogue_style_form_is_repaired_before_delivery(
-    app: Application, text: str
-) -> None:
-    app.model.responses["generate"].append({"reply": text, "dialogue_act": "comment"})
-    app.model.responses["repair"].append(
-        {"reply": "Договорились.", "dialogue_act": "acknowledge"}
-    )
-    await app.telegram.ingest([update(1, "Давай поболтаем.")])
-    await app.drain()
-    assert app.sender.sent == [(1, "Договорились")]
-    assert "repair" in [task for task, _ in app.model.calls]
-    assert len(app.model.calls) <= 4
-
-
-@pytest.mark.parametrize(
-    "text",
-    [
-        "I have a cat.",
-        "I live in Madrid.",
-        "We visited Rome together last summer.",
-        "У меня спокойно: без суеты, просто тихий вечер.",
-    ],
-)
-async def test_ungrounded_claims_trigger_critic_even_without_declared_sources(
-    app: Application, text: str
-) -> None:
-    app.model.responses["generate"].append({"reply": text, "dialogue_act": "chat"})
-    app.model.responses["validate"].append(
-        {"decision": "reject", "reason_codes": ["CANON_CONFLICT"]}
-    )
-    app.model.responses["repair"].append(
-        {
-            "reply": (
-                "Рад это слышать."
-                if text.startswith("У меня")
-                else "Glad to hear that."
-            ),
-            "dialogue_act": "acknowledge",
-        }
-    )
-    await app.telegram.ingest(
-        [
-            update(
-                1,
-                (
-                    "Привет, как проходит вечер?"
-                    if text.startswith("У меня")
-                    else "hello, how is your evening?"
-                ),
-            )
-        ]
-    )
-    await app.drain()
-    assert [name for name, _ in app.model.calls] == [
-        "interpret",
-        "generate",
-        "validate",
-        "repair",
-        "validate_repair",
-    ]
-    assert app.sender.sent[0][1] != text
-    assert await scalar(app, "SELECT status FROM agent_runs") == "prepared"
 
 
 async def test_stop_attempts_cancel_inflight_sender_and_records_unknown(
@@ -160,7 +28,7 @@ async def test_stop_attempts_cancel_inflight_sender_and_records_unknown(
     await app.turn_worker.run_once()
     app.delivery.sender = HangingSender()
     task = asyncio.create_task(app.delivery.run_once())
-    await entered.wait()
+    await asyncio.wait_for(entered.wait(), 2)
     await app.telegram.ingest([update(2, "/stop")])
     await task
     assert cancelled.is_set()
@@ -225,151 +93,10 @@ async def test_restore_never_resends_snapshot_ready_action(app: Application) -> 
         await restarted.drain()
         assert not restarted.sender.sent
         assert (await conversation(restarted)).control_state == "paused"
+        assert (await conversation(restarted)).preview_reply_count == 1
         assert (
             await scalar(restarted, "SELECT status FROM outbox_messages")
             == "delivery_unknown"
         )
     finally:
         await restarted.close()
-
-
-async def test_common_subject_does_not_outrank_exact_old_topic(
-    app: Application,
-) -> None:
-    from app.modules.memory.entities import CompactionBlock
-    from app.modules.memory.service import source_hash
-
-    for number in range(1, 3):
-        await app.telegram.ingest([update(number, f"story {number}")])
-        await app.drain()
-        current = await conversation(app)
-        messages = tuple((await app.conversations.messages(current.scope))[-2:])
-        block = CompactionBlock(messages, source_hash(messages))
-        summary = await app.model.summarize(block, 5, 256)
-        summary.topic_kinds = ["chair_purchase" if number == 1 else "gardening"]
-        await app.memory.publish_summary(current.scope, block, summary)
-    summaries = await app.memory.repository.summaries(
-        current.scope, ["chair_purchase"], ["user_self"]
-    )
-    assert summaries[0]["payload"]["topic_kinds"] == ["chair_purchase"]
-
-
-async def test_reply_to_original_is_present_in_interpreter_and_generator(
-    app: Application,
-) -> None:
-    await app.telegram.ingest([update(1, "First or second?")])
-    await app.drain()
-    raw = update(2, "First.")
-    raw["message"]["reply_to_message"] = {"message_id": 1}
-    await app.telegram.ingest([raw])
-    await app.drain()
-    interpreted = [data for name, data in app.model.calls if name == "interpret"][-1]
-    assert interpreted["REFERENCE_MESSAGES"][0]["text"] == "First or second?"
-    generated = [data for name, data in app.model.calls if name == "generate"][-1]
-    assert any(
-        source["text"] == "First or second?"
-        for source in generated["MEMORY_DATA"]["sources"]
-    )
-
-
-async def test_interpreter_memory_projection_is_bounded(app: Application) -> None:
-    app.agent.builder.settings = app.settings.memory.model_copy(
-        update={"context_tokens": 12000}
-    )
-    from app.modules.memory.schemas import MemoryOperation
-
-    await app.telegram.ingest([update(1, "I enjoy many interests.")])
-    current = await conversation(app)
-    message = (await app.conversations.messages(current.scope))[0]
-
-    async def seed(tx: Transaction) -> None:
-        for number in range(500):
-            operation = MemoryOperation.model_validate(
-                {
-                    "operation": "add",
-                    "predicate": f"interest_{number}",
-                    "value": "A long description of an interest that must not make the interpreter context grow indefinitely.",
-                    "sources": [
-                        {
-                            "message_id": message.id,
-                            "message_version": 1,
-                            "evidence_text": message.text,
-                        }
-                    ],
-                }
-            )
-            await app.memory.repository.apply(
-                tx, current.scope, operation, app.clock.now()
-            )
-
-    await app.database.write(seed)
-    await app.drain()
-    interpreted = app.model.calls[0][1]
-    assert len(interpreted["MEMORY"]) < 500
-    assert await scalar(app, "SELECT status FROM agent_runs") == "prepared"
-
-
-async def test_runs_store_compact_checkpoint_references_without_prompts(
-    app: Application,
-) -> None:
-    await app.telegram.ingest([update(1, "confidential-dialogue-marker")])
-    await app.drain()
-    import aiosqlite
-
-    async with aiosqlite.connect(
-        app.settings.storage.directory / "checkpoints.db"
-    ) as connection:
-        cursor = await connection.execute("SELECT checkpoint FROM checkpoints")
-        data = await cursor.fetchall()
-        assert all(b"confidential-dialogue-marker" not in row[0] for row in data)
-    metrics = json.loads(await scalar(app, "SELECT metrics_json FROM agent_runs"))
-    assert metrics["llm_calls"] == 3
-
-
-async def test_rhetorical_reaction_has_no_agenda_goal_and_is_critically_checked(
-    app: Application,
-) -> None:
-    app.model.responses["generate"].append(
-        {"reply": "Мёд в кофе? Неожиданно.", "dialogue_act": "react"}
-    )
-    await app.telegram.ingest([update(1, "Пью кофе с мёдом.")])
-    await app.drain()
-    assert app.sender.sent == [(1, "Мёд в кофе? Неожиданно")]
-    assert [task for task, _ in app.model.calls] == [
-        "interpret",
-        "generate",
-        "validate",
-    ]
-    assert await scalar(app, "SELECT COUNT(*) FROM dialogue_threads") == 0
-    metrics = json.loads(await scalar(app, "SELECT metrics_json FROM agent_runs"))
-    assert (
-        next(
-            event
-            for event in metrics["validation_events"]
-            if event["stage"] == "draft_semantic"
-        )["decision"]
-        == "accept"
-    )
-
-
-async def test_information_question_without_goal_cannot_bypass_critic(
-    app: Application,
-) -> None:
-    app.model.responses["generate"].append(
-        {"reply": "Какой кофе ты предпочитаешь?", "dialogue_act": "ask"}
-    )
-    app.model.responses["validate"].append(
-        {"decision": "reject", "reason_codes": ["MISSING_QUESTION_GOAL"]}
-    )
-    await app.telegram.ingest([update(1, "Привет.")])
-    await app.drain()
-    assert all("Какой кофе" not in text for _, text in app.sender.sent)
-    assert await scalar(app, "SELECT status FROM agent_runs") == "prepared"
-    metrics = json.loads(await scalar(app, "SELECT metrics_json FROM agent_runs"))
-    verdict = next(
-        event
-        for event in metrics["validation_events"]
-        if event["stage"] == "draft_semantic"
-    )
-    assert verdict["reason_codes"] == ["MISSING_QUESTION_GOAL"]
-    assert metrics["llm_calls"] <= 5

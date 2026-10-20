@@ -1,0 +1,13 @@
+UPDATE conversations SET control_state='paused' WHERE control_state='handoff_only';
+ALTER TABLE conversations DROP COLUMN purchase_state;
+ALTER TABLE conversations DROP COLUMN handoff_state;
+DROP TABLE handoffs;
+DROP TABLE purchases;
+DROP TABLE offers;
+DROP TABLE commitments;
+DROP TABLE dialogue_threads;
+DROP TABLE summary_sources;
+DROP TABLE memory_summaries;
+UPDATE scheduled_jobs SET status='cancelled',lease_token=NULL,lease_until=NULL,error_code='RETIRED_ENGINE' WHERE kind NOT IN ('turn','followup','forget','backup','retention') AND status IN ('pending','running');
+UPDATE outbox_messages SET status='cancelled',error_code='RETIRED_ENGINE' WHERE status='ready' AND (kind IN ('offer','handoff') OR (kind='reply' AND json_extract(proposal_json,'$.research_run_id') IS NULL));
+UPDATE message_versions SET metadata_json=json_set(metadata_json,'$.confirmed_delivery',json('true')) WHERE message_id IN (SELECT s.message_id FROM said_ledger s JOIN messages m ON m.id=s.message_id WHERE m.role IN ('assistant','service'));

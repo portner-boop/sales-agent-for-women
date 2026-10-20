@@ -14,8 +14,6 @@ class Conversation:
     control_revision: int
     memory_revision: int
     control_state: str
-    purchase_state: str
-    handoff_state: str
     dialogue_mode: str
     language: str
     first_reply_at: float | None
@@ -23,6 +21,11 @@ class Conversation:
     last_activity_at: float
     preview_reply_count: int = 0
     preview_closed_at: float | None = None
+    engine_version: str = "v2"
+    persona_mode: str = "research_human"
+    completed_pair_count: int = 0
+    pending_outgoing_turn_id: str | None = None
+    invitation_state: str = "none"
 
     @property
     def scope(self) -> ScopeContext:

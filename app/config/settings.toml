@@ -8,8 +8,9 @@ poll_timeout = 20
 [default.llm]
 api_key = ""
 output_tokens = 1200
-structured_mode = "json_schema"
-reasoning_effort = "none"
+structured_mode = "json_object"
+reasoning_effort = "low"
+verbosity = "low"
 
 [default.storage]
 directory = "data"
@@ -19,38 +20,34 @@ backup_interval_seconds = 3600
 retention_days = 30
 
 [default.runtime]
-tester_ids = []
 llm_concurrency = 5
-llm_max_calls = 8
 llm_attempt_seconds = 12
 turn_deadline_seconds = 45
+first_deadline_seconds = 15
 coalesce_seconds = 0.5
 max_coalesce_seconds = 2.0
 activity_gap_seconds = 1800
 max_message_chars = 16000
 kill_switch = false
-reply_pacing_enabled = true
-reply_pause_min_seconds = 2.0
-reply_pause_max_seconds = 4.0
-reply_typing_chars_per_second = 3.0
-reply_delay_jitter_ratio = 0.2
-reply_delay_min_seconds = 5.0
-reply_delay_max_seconds = 60.0
 followup_enabled = true
 followup_min_seconds = 60.0
 followup_max_seconds = 60.0
 followup_ttl_seconds = 90.0
+followup_max_count = 2
+followup_second_seconds = 180.0
+
+[default.runtime.reply_timing]
+enabled = true
+pause_min_seconds = 2.0
+pause_max_seconds = 4.0
+characters_per_second = 3.0
+jitter_fraction = 0.2
+minimum_seconds = 5.0
+maximum_seconds = 60.0
 
 [default.memory]
 context_tokens = 64000
-recent_turns = 6
-history_threshold_tokens = 6000
-block_tokens = 2500
-summary_tokens = 700
-summary_context_tokens = 900
 
 [default.commerce]
-package_minutes = 20
-preview_enabled = true
 preview_min_replies = 15
 preview_max_replies = 20

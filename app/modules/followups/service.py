@@ -1,6 +1,5 @@
 import asyncio
 import random
-import re
 from collections import defaultdict
 from collections.abc import Awaitable, Callable
 
@@ -14,7 +13,7 @@ from app.modules.jobs.repository import JobRepository
 from app.modules.jobs.schemas import JobPayload
 from app.shared.config import RuntimeSettings
 from app.shared.entities import Clock, ScopeContext
-from app.shared.storage import Transaction, fetchone
+from app.shared.storage import Transaction
 
 
 class FollowupService:
@@ -35,27 +34,27 @@ class FollowupService:
     async def after_reply(
         self, tx: Transaction, conversation: Conversation, message: OutboxMessage
     ) -> None:
-        if (
-            not self.settings.followup_enabled
-            or not message.proposal.get("followup_allowed")
-            or message.proposal.get("origin") == "followup"
+        if not self.settings.followup_enabled or not message.proposal.get(
+            "followup_allowed"
         ):
             return
-        latest = await fetchone(
-            tx,
-            "SELECT v.text FROM messages m JOIN message_versions v ON v.message_id=m.id AND v.version=m.current_version WHERE m.scope_id=? AND m.epoch=? AND m.role='user' ORDER BY m.sequence DESC LIMIT 1",
-            (message.scope.scope_id, message.scope.epoch),
-        )
-        if latest is None or re.search(
-            r"не пиши (?:мне |пока |перв)|мне пора|я (?:пойду спать|сейчас занят[а]?|отошла)|напишу (?:позже|потом)|до завтра|don't (?:message|text)|do not (?:message|text)|going to (?:bed|sleep)|talk (?:tomorrow|later)|(?:escribo|hablamos) (?:luego|mañana)|(?:escrevo|falamos) (?:depois|amanhã)",
-            latest["text"],
-            re.I,
-        ):
+        ordinal = int(message.proposal.get("followup_ordinal", 0)) + 1
+        if ordinal > self.settings.followup_max_count:
             return
         now = self.clock.now()
-        due = now + random.uniform(
-            self.settings.followup_min_seconds, self.settings.followup_max_seconds
+        silence_started_at = (
+            float(message.proposal["silence_started_at"]) if ordinal > 1 else now
         )
+        due = (
+            silence_started_at + self.settings.followup_second_seconds
+            if ordinal > 1
+            else now
+            + random.uniform(
+                self.settings.followup_min_seconds, self.settings.followup_max_seconds
+            )
+        )
+        if due + self.settings.followup_ttl_seconds <= now:
+            return
         identifier = await self.repository.schedule(
             tx,
             message.scope,
@@ -63,6 +62,8 @@ class FollowupService:
             now,
             due,
             due + self.settings.followup_ttl_seconds,
+            ordinal,
+            silence_started_at,
         )
         if identifier is not None:
             await self.jobs.schedule(
@@ -106,6 +107,15 @@ class FollowupService:
         )
         if ticket is None:
             return
+        if ticket.ordinal > self.settings.followup_max_count:
+
+            async def limit(tx: Transaction) -> None:
+                await self.repository.finish(
+                    tx, ticket.id, "cancelled", "OPPORTUNITY_LIMIT"
+                )
+
+            await self.repository.database.write(limit)
+            return
 
         async def prepared(tx: Transaction) -> None:
             await self.repository.prepared(tx, ticket)
@@ -132,7 +142,16 @@ class FollowupService:
         if not success:
 
             async def skip(tx: Transaction) -> None:
-                await self.repository.finish(tx, ticket.id, "skipped", "NO_CANDIDATE")
+                await self.repository.finish(
+                    tx,
+                    ticket.id,
+                    "skipped",
+                    (
+                        "REQUIRED_RESPONSE_FAILED"
+                        if ticket.requires_response
+                        else "NO_CANDIDATE"
+                    ),
+                )
 
             await self.repository.database.write(skip)
 

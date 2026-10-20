@@ -6,7 +6,7 @@ from uuid import uuid4
 import aiosqlite
 
 from app.modules.conversations.entities import Conversation, Message, Turn
-from app.modules.conversations.schemas import AgendaOperation, IncomingMessage
+from app.modules.conversations.schemas import IncomingMessage
 from app.shared.entities import ScopeContext
 from app.shared.storage import (
     Database,
@@ -28,6 +28,12 @@ def conversation_from_row(row: aiosqlite.Row) -> Conversation:
 
 
 def message_from_row(row: aiosqlite.Row) -> Message:
+    metadata = json.loads(row["metadata_json"])
+    if (
+        "sent_control_revision" in row.keys()
+        and row["sent_control_revision"] is not None
+    ):
+        metadata["delivery_control_revision"] = row["sent_control_revision"]
     return Message(
         row["id"],
         row["version"],
@@ -39,11 +45,18 @@ def message_from_row(row: aiosqlite.Row) -> Message:
         row["external_id"],
         row["reply_to_external_id"],
         row["turn_id"],
-        json.loads(row["metadata_json"]),
+        metadata,
     )
 
 
-MESSAGE_SELECT = "SELECT m.*,v.version,v.text,v.event_time,v.received_at,v.metadata_json FROM messages m JOIN message_versions v ON v.message_id=m.id AND v.version=m.current_version"
+MESSAGE_SELECT = (
+    "SELECT m.*,v.version,v.text,v.event_time,v.received_at,v.metadata_json,"
+    "o.control_revision AS sent_control_revision "
+    "FROM messages m JOIN message_versions v ON v.message_id=m.id AND v.version=m.current_version "
+    "LEFT JOIN outbox_messages o ON o.scope_id=m.scope_id AND o.epoch=m.epoch "
+    "AND o.external_message_id=m.external_id AND o.status='delivered' "
+    "AND m.role IN ('assistant','service')"
+)
 
 
 class ConversationRepository:
@@ -57,10 +70,23 @@ class ConversationRepository:
         user_id: int,
         chat_id: int,
         now: float,
+        engine_version: str = "v2",
+        persona_mode: str = "research_human",
+        language: str = "en",
     ) -> Conversation:
         await tx.execute(
-            "INSERT OR IGNORE INTO conversations(id,tenant_id,channel_account_id,external_user_id,chat_id,persona_id,last_activity_at,created_at) VALUES(?,'demo',?,?,?,'marko',?,?)",
-            (uuid4().hex, channel, user_id, chat_id, now, now),
+            "INSERT OR IGNORE INTO conversations(id,tenant_id,channel_account_id,external_user_id,chat_id,persona_id,last_activity_at,created_at,engine_version,persona_mode,language) VALUES(?,'demo',?,?,?,'marko',?,?,?,?,?)",
+            (
+                uuid4().hex,
+                channel,
+                user_id,
+                chat_id,
+                now,
+                now,
+                engine_version,
+                persona_mode,
+                language,
+            ),
         )
         row = await fetchone(
             tx,
@@ -142,6 +168,8 @@ class ConversationRepository:
             "UPDATE conversations SET input_revision=input_revision+1,last_activity_at=? WHERE id=?",
             (now, scope.scope_id),
         )
+        if existing is None:
+            await self._complete_pair(tx, scope, message_id)
         session = await fetchone(
             tx,
             "SELECT id,last_activity_at FROM activity_sessions WHERE scope_id=? AND epoch=? ORDER BY started_at DESC LIMIT 1",
@@ -172,6 +200,26 @@ class ConversationRepository:
         )
         return message, True
 
+    async def _complete_pair(
+        self, tx: Transaction, scope: ScopeContext, message_id: str
+    ) -> None:
+        row = await fetchone(
+            tx,
+            "SELECT pending_outgoing_turn_id FROM conversations WHERE id=? AND epoch=?",
+            (scope.scope_id, scope.epoch),
+        )
+        if row is None or row["pending_outgoing_turn_id"] is None:
+            return
+        cursor = await tx.execute(
+            "UPDATE outgoing_dialogue_turns SET paired_message_id=? WHERE turn_id=? AND scope_id=? AND epoch=? AND outcome='delivered' AND paired_message_id IS NULL",
+            (message_id, row["pending_outgoing_turn_id"], scope.scope_id, scope.epoch),
+        )
+        if cursor.rowcount:
+            await tx.execute(
+                "UPDATE conversations SET completed_pair_count=completed_pair_count+1,pending_outgoing_turn_id=NULL WHERE id=? AND epoch=?",
+                (scope.scope_id, scope.epoch),
+            )
+
     async def next_sequence(self, tx: Transaction, scope: ScopeContext) -> int:
         row = await fetchone(
             tx,
@@ -196,94 +244,61 @@ class ConversationRepository:
         )
         return [message_from_row(row) for row in rows]
 
-    async def sources(self, scope: ScopeContext, ids: list[str]) -> list[Message]:
-        async with self.database.read() as tx:
-            await require_scope(tx, scope)
-            result = []
-            for message_id in dict.fromkeys(ids):
-                row = await fetchone(
-                    tx,
-                    MESSAGE_SELECT + " WHERE m.id=? AND m.scope_id=? AND m.epoch=?",
-                    (message_id, scope.scope_id, scope.epoch),
-                )
-                if row:
-                    result.append(message_from_row(row))
-            return result
-
-    async def source_versions(
-        self, scope: ScopeContext, references: list[tuple[str, int]]
-    ) -> list[Message]:
-        async with self.database.read() as tx:
-            await require_scope(tx, scope)
-            result = []
-            for identifier, version in dict.fromkeys(references):
-                row = await fetchone(
-                    tx,
-                    "SELECT m.*,v.version,v.text,v.event_time,v.received_at,v.metadata_json FROM messages m JOIN message_versions v ON v.message_id=m.id WHERE m.scope_id=? AND m.epoch=? AND m.id=? AND v.version=?",
-                    (scope.scope_id, scope.epoch, identifier, version),
-                )
-                if row:
-                    result.append(message_from_row(row))
-            return result
+    async def _claim_pending(
+        self, tx: Transaction, scope: ScopeContext, now: float
+    ) -> Turn | None:
+        conversation = await self.get(scope.scope_id, tx)
+        await require_scope(tx, scope)
+        rows = await fetchall(
+            tx,
+            MESSAGE_SELECT
+            + " WHERE m.scope_id=? AND m.epoch=? AND m.pending=1 ORDER BY m.sequence",
+            (scope.scope_id, scope.epoch),
+        )
+        messages = [message_from_row(row) for row in rows]
+        if not messages:
+            return None
+        await tx.execute(
+            "UPDATE turns SET status='cancelled' WHERE scope_id=? AND epoch=? AND status='running'",
+            (scope.scope_id, scope.epoch),
+        )
+        turn_id = uuid4().hex
+        await tx.execute(
+            "INSERT INTO turns VALUES(?,?,?,'running',?,?,?,?)",
+            (
+                turn_id,
+                scope.scope_id,
+                scope.epoch,
+                conversation.input_revision,
+                messages[0].sequence,
+                messages[-1].sequence,
+                now,
+            ),
+        )
+        for message in messages:
+            await tx.execute(
+                "UPDATE messages SET turn_id=? WHERE id=?", (turn_id, message.id)
+            )
+        return Turn(turn_id, scope, conversation.input_revision, tuple(messages))
 
     async def claim_turn(self, scope: ScopeContext, now: float) -> Turn | None:
         async def claim(tx: Transaction) -> Turn | None:
-            conversation = await self.get(scope.scope_id, tx)
-            await require_scope(tx, scope)
-            rows = await fetchall(
-                tx,
-                MESSAGE_SELECT
-                + " WHERE m.scope_id=? AND m.epoch=? AND m.pending=1 ORDER BY m.sequence",
-                (scope.scope_id, scope.epoch),
-            )
-            messages = [message_from_row(row) for row in rows]
-            if not messages:
-                return None
-            await tx.execute(
-                "UPDATE turns SET status='cancelled' WHERE scope_id=? AND epoch=? AND status='running'",
-                (scope.scope_id, scope.epoch),
-            )
-            turn_id = uuid4().hex
-            await tx.execute(
-                "INSERT INTO turns VALUES(?,?,?,'running',?,?,?,?)",
-                (
-                    turn_id,
-                    scope.scope_id,
-                    scope.epoch,
-                    conversation.input_revision,
-                    messages[0].sequence,
-                    messages[-1].sequence,
-                    now,
-                ),
-            )
-            for message in messages:
-                await tx.execute(
-                    "UPDATE messages SET turn_id=? WHERE id=?", (turn_id, message.id)
-                )
-            return Turn(turn_id, scope, conversation.input_revision, tuple(messages))
+            return await self._claim_pending(tx, scope, now)
 
         return await self.database.write(claim)
 
-    async def expire_pending(self, scope: ScopeContext, cutoff: float) -> int:
-        async def expire(tx: Transaction) -> int:
-            await require_scope(tx, scope)
-            await tx.execute(
-                "UPDATE turns SET status='unanswered' WHERE scope_id=? AND epoch=? AND status IN ('running','deferred') AND id IN (SELECT m.turn_id FROM messages m JOIN message_versions v ON v.message_id=m.id AND v.version=m.current_version WHERE m.pending=1 AND v.received_at<=?)",
-                (scope.scope_id, scope.epoch, cutoff),
-            )
-            cursor = await tx.execute(
-                "UPDATE messages SET pending=0 WHERE scope_id=? AND epoch=? AND pending=1 AND id IN (SELECT message_id FROM message_versions WHERE received_at<=? AND version=messages.current_version)",
-                (scope.scope_id, scope.epoch, cutoff),
-            )
-
-            return cursor.rowcount
-
-        return await self.database.write(expire)
+    async def fail_pending(
+        self, tx: Transaction, scope: ScopeContext, now: float
+    ) -> Turn | None:
+        turn = await self._claim_pending(tx, scope, now)
+        if turn is not None:
+            await self.finish_turn(tx, turn, "failed")
+        return turn
 
     async def finish_turn(self, tx: Transaction, turn: Turn, status: str) -> None:
         await require_scope(tx, turn.scope)
         await tx.execute("UPDATE turns SET status=? WHERE id=?", (status, turn.id))
-        if status in {"prepared", "skipped", "unanswered"} and turn.messages:
+        if status in {"prepared", "skipped", "failed"} and turn.messages:
             for message in turn.messages:
                 await tx.execute(
                     "UPDATE messages SET pending=0 WHERE id=? AND current_version=?",
@@ -301,92 +316,6 @@ class ConversationRepository:
         await tx.execute(
             "UPDATE conversations SET control_state=?,control_revision=control_revision+1 WHERE id=?",
             (state, scope.scope_id),
-        )
-
-    async def agenda(
-        self, scope: ScopeContext, tx: Transaction | None = None
-    ) -> list[dict[str, Any]]:
-        if tx is None:
-            async with self.database.read() as connection:
-                return await self.agenda(scope, connection)
-        await require_scope(tx, scope)
-        rows = await fetchall(
-            tx,
-            "SELECT * FROM dialogue_threads WHERE scope_id=? AND epoch=? ORDER BY updated_at DESC",
-            (scope.scope_id, scope.epoch),
-        )
-        return [dict(row) for row in rows]
-
-    async def context_agenda(
-        self, scope: ScopeContext, topics: list[str]
-    ) -> list[dict[str, Any]]:
-        items = await self.agenda(scope)
-        active = [
-            item
-            for item in items
-            if item["status"] not in {"answered", "declined", "closed"}
-        ]
-        matched = [
-            item
-            for item in items
-            if item not in active
-            and (item["topic_kind"] in topics or item["question_goal"] in topics)
-        ]
-        recent = [item for item in items if item not in active and item not in matched][
-            :12
-        ]
-        return active + matched + recent
-
-    async def question_state(
-        self, scope: ScopeContext, goal: str, time_scope: str
-    ) -> list[dict[str, Any]]:
-        async with self.database.read() as tx:
-            await require_scope(tx, scope)
-            return [
-                dict(row)
-                for row in await fetchall(
-                    tx,
-                    "SELECT * FROM dialogue_threads WHERE scope_id=? AND epoch=? AND question_goal=? AND question_time_scope=?",
-                    (scope.scope_id, scope.epoch, goal, time_scope),
-                )
-            ]
-
-    async def update_agenda(
-        self,
-        tx: Transaction,
-        scope: ScopeContext,
-        operation: AgendaOperation,
-        now: float,
-    ) -> None:
-        await require_scope(tx, scope)
-        existing = await fetchone(
-            tx,
-            "SELECT id FROM dialogue_threads WHERE scope_id=? AND epoch=? AND subject_id=? AND topic_kind=? AND question_time_scope=?",
-            (
-                scope.scope_id,
-                scope.epoch,
-                operation.subject_id,
-                operation.topic_kind,
-                operation.question_time_scope,
-            ),
-        )
-        identifier = existing["id"] if existing else uuid4().hex
-        await tx.execute(
-            "INSERT INTO dialogue_threads(id,scope_id,epoch,subject_id,topic_kind,status,question_goal,question_time_scope,answer_message_ids_json,pending_user_question,next_allowed_step,updated_at) VALUES(?,?,?,?,?,?,?,?,?,?,?,?) ON CONFLICT(id) DO UPDATE SET status=excluded.status,question_goal=COALESCE(excluded.question_goal,dialogue_threads.question_goal),answer_message_ids_json=excluded.answer_message_ids_json,pending_user_question=excluded.pending_user_question,next_allowed_step=excluded.next_allowed_step,updated_at=excluded.updated_at",
-            (
-                identifier,
-                scope.scope_id,
-                scope.epoch,
-                operation.subject_id,
-                operation.topic_kind,
-                operation.status,
-                operation.question_goal,
-                operation.question_time_scope,
-                json.dumps(operation.answer_message_ids),
-                operation.pending_user_question,
-                operation.next_allowed_step,
-                now,
-            ),
         )
 
     async def record_sent(
@@ -433,38 +362,15 @@ class ConversationRepository:
                 json.dumps(
                     {
                         "confirmed_delivery": True,
-                        "question_goal": proposal.get("question_goal"),
-                        "question_subject_id": proposal.get(
-                            "question_subject_id", "user_self"
-                        ),
-                        **(
-                            {
-                                "question_time_scope": proposal.get(
-                                    "question_time_scope", "stable"
-                                )
-                            }
-                            if proposal.get("question_goal")
-                            else {}
-                        ),
-                        **(
-                            {
-                                "resume_question_thread_id": proposal[
-                                    "resume_question_thread_id"
-                                ]
-                            }
-                            if proposal.get("resume_question_thread_id")
-                            else {}
-                        ),
-                        "casual_imperfection_used": proposal.get(
-                            "casual_imperfection_used", False
-                        ),
-                        "casual_imperfection": proposal.get("casual_imperfection"),
-                        "style_plan": proposal.get("style_plan", {}),
-                        **(
-                            {"origin": "followup"}
-                            if proposal.get("origin") == "followup"
-                            else {}
-                        ),
+                        **{
+                            key: proposal[key]
+                            for key in (
+                                "origin",
+                                "response_language",
+                                "research_run_id",
+                            )
+                            if key in proposal
+                        },
                     }
                 ),
             ),
@@ -476,80 +382,22 @@ class ConversationRepository:
                 scope.scope_id,
                 scope.epoch,
                 proposal.get("dialogue_act", "service"),
-                proposal.get("question_goal"),
-                proposal.get("question_time_scope", "stable"),
+                None,
+                "stable",
                 kind,
                 now,
             ),
         )
-        question_goal = proposal.get("question_goal")
-        if kind == "reply" and question_goal:
-            thread = await fetchone(
-                tx,
-                "SELECT topic_kind FROM dialogue_threads WHERE id=? AND scope_id=? AND epoch=? AND subject_id=?",
-                (
-                    proposal.get("question_thread_id"),
-                    scope.scope_id,
-                    scope.epoch,
-                    proposal.get("question_subject_id", "user_self"),
-                ),
-            )
-            operation = AgendaOperation(
-                topic_kind=thread["topic_kind"] if thread else question_goal,
-                subject_id=proposal.get("question_subject_id", "user_self"),
-                status="awaiting_user",
-                question_goal=question_goal,
-                question_time_scope=proposal.get("question_time_scope", "stable"),
-            )
-            await self.update_agenda(tx, scope, operation, now)
-            await tx.execute(
-                "UPDATE dialogue_threads SET last_question_message_id=? WHERE scope_id=? AND epoch=? AND question_goal=? AND question_time_scope=? AND subject_id=?",
-                (
-                    message_id,
-                    scope.scope_id,
-                    scope.epoch,
-                    question_goal,
-                    operation.question_time_scope,
-                    operation.subject_id,
-                ),
-            )
-        commitment = proposal.get("new_commitment_candidate")
-        if commitment:
-            await tx.execute(
-                "INSERT INTO commitments VALUES(?,?,?,?,?,'open')",
-                (uuid4().hex, scope.scope_id, scope.epoch, message_id, commitment),
-            )
         return message_id
 
-    async def commitments(self, scope: ScopeContext) -> list[dict[str, Any]]:
-        async with self.database.read() as tx:
-            await require_scope(tx, scope)
-            return [
-                dict(row)
-                for row in await fetchall(
-                    tx,
-                    "SELECT * FROM commitments WHERE scope_id=? AND epoch=? AND status='open'",
-                    (scope.scope_id, scope.epoch),
-                )
-            ]
-
-    async def completed_messages(self, scope: ScopeContext) -> list[Message]:
-        async with self.database.read() as tx:
-            await require_scope(tx, scope)
-            rows = await fetchall(
-                tx,
-                MESSAGE_SELECT
-                + " WHERE m.scope_id=? AND m.epoch=? AND m.pending=0 AND (m.turn_id IS NULL OR EXISTS(SELECT 1 FROM turns t WHERE t.id=m.turn_id AND t.status IN ('prepared','skipped'))) ORDER BY m.sequence",
-                (scope.scope_id, scope.epoch),
-            )
-            return [message_from_row(row) for row in rows]
-
     async def purge(self, tx: Transaction, scope_id: str, new_epoch: int) -> None:
-        await tx.execute("DELETE FROM dialogue_threads WHERE scope_id=?", (scope_id,))
+        await tx.execute(
+            "DELETE FROM outgoing_dialogue_turns WHERE scope_id=?", (scope_id,)
+        )
         await tx.execute("DELETE FROM messages WHERE scope_id=?", (scope_id,))
         await tx.execute("DELETE FROM turns WHERE scope_id=?", (scope_id,))
         await tx.execute("DELETE FROM activity_sessions WHERE scope_id=?", (scope_id,))
         await tx.execute(
-            "UPDATE conversations SET epoch=?,input_revision=input_revision+1,control_revision=control_revision+1,memory_revision=memory_revision+1,processed_sequence=0,dialogue_mode='continuation',preview_reply_count=0,preview_closed_at=NULL WHERE id=?",
+            "UPDATE conversations SET epoch=?,input_revision=input_revision+1,control_revision=control_revision+1,memory_revision=memory_revision+1,processed_sequence=0,first_reply_at=NULL,language='en',dialogue_mode='opening',preview_reply_count=0,preview_closed_at=NULL,completed_pair_count=0,pending_outgoing_turn_id=NULL,invitation_state='none' WHERE id=?",
             (new_epoch, scope_id),
         )

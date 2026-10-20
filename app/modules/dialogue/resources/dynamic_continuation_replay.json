@@ -1,0 +1,16 @@
+[
+  {
+    "id": "dynamic-initiative-and-space",
+    "steps": [
+      {"message": "hey handsome, couldnt resist saying hi. hope you’re more trouble than you look", "language": "en"},
+      {"message": "you’re being very polite. tease me a little, i can take it", "language": "en"},
+      {"message": "я Лера, музыку включила наконец. чаще Нину Симон слушаю, когда дома что-нибудь делаю", "language": "ru"},
+      {"message": "ага", "language": "ru"},
+      {"wait_seconds": 60},
+      {"wait_seconds": 120},
+      {"message": "let’s switch to English. no questions for now, just tell me what you like about evenings at home", "language": "en"},
+      {"message": "на сегодня всё, спокойной ночи. первым не пиши", "language": "ru"},
+      {"wait_seconds": 240}
+    ]
+  }
+]

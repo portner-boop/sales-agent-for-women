@@ -3,8 +3,8 @@ from math import ceil
 from typing import Any
 from uuid import uuid4
 
-from app.modules.agent.schemas import ContextManifest
 from app.modules.conversations.entities import Turn
+from app.modules.delivery.observations import project_research_delivery
 from app.shared.storage import Database, Transaction, fetchall, require_scope
 
 
@@ -23,11 +23,11 @@ class AgentRepository:
             )
             latencies = await fetchall(
                 tx,
-                "SELECT o.created_at-r.started_at+COALESCE(json_extract(r.metrics_json,'$.queued_seconds'),0) seconds FROM outbox_messages o JOIN agent_runs r ON o.turn_id=r.turn_id WHERE o.status='delivered' AND o.kind='reply' AND o.predecessor_id IS NULL AND COALESCE(json_extract(o.proposal_json,'$.origin'),'')!='followup' ORDER BY o.created_at DESC LIMIT 1000",
+                "SELECT CAST(json_extract(o.proposal_json,'$.delivery_finished_at') AS REAL)-r.started_at+COALESCE(json_extract(r.metrics_json,'$.queued_seconds'),0) seconds FROM outbox_messages o JOIN agent_runs r ON o.turn_id=r.turn_id WHERE o.status='delivered' AND json_extract(o.proposal_json,'$.delivery_finished_at') IS NOT NULL AND o.kind='reply' AND o.predecessor_id IS NULL AND COALESCE(json_extract(o.proposal_json,'$.origin'),'')!='followup' ORDER BY o.created_at DESC LIMIT 1000",
             )
             completions = await fetchall(
                 tx,
-                "SELECT MAX(o.created_at)-r.started_at+COALESCE(json_extract(r.metrics_json,'$.queued_seconds'),0) seconds FROM outbox_messages o JOIN agent_runs r ON o.turn_id=r.turn_id WHERE o.kind='reply' AND COALESCE(json_extract(o.proposal_json,'$.origin'),'')!='followup' GROUP BY r.id HAVING COUNT(*)=SUM(CASE WHEN o.status='delivered' THEN 1 ELSE 0 END) ORDER BY MAX(o.created_at) DESC LIMIT 1000",
+                "SELECT MAX(CAST(json_extract(o.proposal_json,'$.delivery_finished_at') AS REAL))-r.started_at+COALESCE(json_extract(r.metrics_json,'$.queued_seconds'),0) seconds FROM outbox_messages o JOIN agent_runs r ON o.turn_id=r.turn_id WHERE o.kind='reply' AND COALESCE(json_extract(o.proposal_json,'$.origin'),'')!='followup' GROUP BY r.id HAVING MIN(json_extract(o.proposal_json,'$.delivery_finished_at')) IS NOT NULL AND COUNT(*)=SUM(CASE WHEN o.status='delivered' THEN 1 ELSE 0 END) ORDER BY MAX(o.created_at) DESC LIMIT 1000",
             )
             transport = await fetchall(
                 tx,
@@ -40,9 +40,7 @@ class AgentRepository:
         phases = {}
         for phase in (
             "queued_seconds",
-            "lock_seconds",
             "context_seconds",
-            "selection_seconds",
             "generation_seconds",
             "repair_seconds",
         ):
@@ -56,11 +54,6 @@ class AgentRepository:
             }
         phase_samples = {
             "transport_seconds": [float(row["seconds"]) for row in transport],
-            "pacing_planned_seconds": [
-                sum(value["pacing_seconds"])
-                for value in values
-                if "pacing_seconds" in value
-            ],
             "llm_queue_seconds": [
                 float(event["queue_seconds"])
                 for event in events
@@ -70,16 +63,6 @@ class AgentRepository:
                 float(event["model_seconds"])
                 for event in events
                 if "model_seconds" in event
-            ],
-            "interpretation_seconds": [
-                float(event["seconds"])
-                for event in events
-                if event["task"] == "interpret"
-            ],
-            "validation_seconds": [
-                float(event["seconds"])
-                for event in events
-                if event["task"].startswith("validate")
             ],
         }
         for phase, samples in phase_samples.items():
@@ -102,7 +85,7 @@ class AgentRepository:
             ),
             "repair_runs_last_1000": sum(
                 any(
-                    event["task"] in {"repair", "recover"}
+                    event["task"] == "dialogue_repair"
                     for event in value.get("llm_events", [])
                 )
                 for value in values
@@ -150,7 +133,7 @@ class AgentRepository:
         identifier: str,
         status: str,
         now: float,
-        manifest: ContextManifest | None,
+        manifest: dict[str, Any] | None,
         metrics: dict[str, Any],
         error_code: str | None = None,
     ) -> None:
@@ -160,11 +143,13 @@ class AgentRepository:
                 (
                     status,
                     now,
-                    manifest.model_dump_json() if manifest else "{}",
+                    json.dumps(manifest or {}),
                     json.dumps(metrics),
                     error_code,
                     identifier,
                 ),
             )
+
+            await project_research_delivery(tx, identifier)
 
         await self.database.write(finish)

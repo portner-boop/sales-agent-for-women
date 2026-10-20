@@ -1,0 +1,9 @@
+{
+  "authorship": "approved_fictional_character_history",
+  "scenes": [
+    {"starts_hour": 0, "ends_hour": 8, "setting": "at home", "activity": "a quiet night at home, winding down with music low"},
+    {"starts_hour": 8, "ends_hour": 12, "setting": "at home", "activity": "having coffee at home before ordinary tasks"},
+    {"starts_hour": 12, "ends_hour": 18, "setting": "at home", "activity": "taking a short break at home between ordinary tasks"},
+    {"starts_hour": 18, "ends_hour": 24, "setting": "at home", "activity": "unwinding at home with some music"}
+  ]
+}

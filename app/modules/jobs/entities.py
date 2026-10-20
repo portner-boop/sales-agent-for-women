@@ -24,6 +24,7 @@ class Job:
     payload: dict[str, Any]
     attempts: int
     lease_token: str
+    terminal_error: str | None = None
 
     @property
     def is_final_attempt(self) -> bool:

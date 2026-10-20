@@ -171,7 +171,7 @@ def restore_backup(backup: Path, directory: Path) -> None:
             )
         restored.execute("UPDATE messages SET pending=0")
         restored.execute(
-            "UPDATE conversations SET control_state=CASE WHEN purchase_state='confirmed' THEN 'handoff_only' ELSE 'paused' END,control_revision=control_revision+1"
+            "UPDATE conversations SET control_state='paused',control_revision=control_revision+1"
         )
         restored.commit()
     finally:

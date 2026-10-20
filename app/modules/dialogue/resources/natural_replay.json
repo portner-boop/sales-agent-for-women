@@ -1,0 +1,43 @@
+[
+  {
+    "id": "natural-ru",
+    "steps": [
+      {"message": "Привет, Марко", "language": "ru"},
+      {"message": "Лера. Только домой доползла, дождь как из ведра а зонт конечно дома", "language": "ru"},
+      {"message": "Куртка мокрая, настроение уже получше. Чай сделала и носки наконец сухие", "language": "ru"},
+      {"message": "А у тебя как выходные прошли?", "language": "ru"},
+      {"message": "Анте твой друг? И что у вас там вкусного было?", "language": "ru"},
+      {"message": "А в воскресенье один был?", "language": "ru"},
+      {"message": "Я себе вчера блины делала. Первый улетел мимо сковородки, кот Семён был счастлив", "language": "ru"},
+      {"message": "Семён ещё и второй просил. Будешь смеяться надо мной, тебе вообще ничего не достанется", "language": "ru"},
+      {"message": "Я ещё джаз включаю когда готовлю, а ты какую музыку обычно слушаешь?", "language": "ru"},
+      {"wait_seconds": 60},
+      {"wait_seconds": 120},
+      {"message": "Вернулась. Телефон на кухне бросила. Я обычно Нину Симон включаю, а Семён под неё засыпает", "language": "ru"},
+      {"message": "Ладно про блины. Ты бы лучше со мной позаигрывал, я ради этого и написала", "language": "ru"},
+      {"message": "Ладно, проверка внимательности: как меня зовут, кто у меня дома и под что я готовлю?", "language": "ru"},
+      {"message": "Сегодня уже засыпаю, давай завтра. Только первым ночью не пиши", "language": "ru"},
+      {"wait_seconds": 240}
+    ]
+  },
+  {
+    "id": "natural-en",
+    "steps": [
+      {"message": "hey Marko", "language": "en"},
+      {"message": "im Maya. finally home, the train was packed and my shoes are soaked", "language": "en"},
+      {"message": "tea and dry socks saved me. what did you get up to over the weekend?", "language": "en"},
+      {"message": "was Ante a friend? what did you eat?", "language": "en"},
+      {"message": "and sunday evening, on your own?", "language": "en"},
+      {"message": "i tried pancakes yesterday and the first one landed on the floor. my dog Pip was delighted", "language": "en"},
+      {"message": "keep laughing and you wont get any. Pip is already ahead of you", "language": "en"},
+      {"message": "i play old soul records when i cook. what do you usually listen to?", "language": "en"},
+      {"wait_seconds": 60},
+      {"wait_seconds": 120},
+      {"message": "back now. i left the phone in the kitchen. usually its Nina Simone, Pip falls asleep to it", "language": "en"},
+      {"message": "enough about breakfast. i came here to flirt with you, give me something to work with", "language": "en"},
+      {"message": "quick memory check: my name, my animal and my cooking music?", "language": "en"},
+      {"message": "im falling asleep. goodnight, dont message me first tonight", "language": "en"},
+      {"wait_seconds": 240}
+    ]
+  }
+]

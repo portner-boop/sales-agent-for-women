@@ -10,6 +10,7 @@ from app.modules.conversations.repository import ConversationRepository
 from app.modules.conversations.schemas import IncomingMessage
 from app.modules.delivery.repository import DeliveryRepository
 from app.modules.delivery.schemas import OutboxDraft
+from app.modules.dialogue.languages import canonical_language
 from app.modules.followups.service import FollowupService
 from app.modules.jobs.repository import JobRepository
 from app.modules.jobs.schemas import JobPayload
@@ -31,10 +32,20 @@ SERVICE_TEXTS = {
         "pt": "Comandos disponíveis: /start — iniciar, /stop — parar, /privacy — condições, /forget — apagar memórias.",
     },
     "start": {
-        "ru": "Я Марко. Здесь доступна тестовая переписка. /start — начать или возобновить разговор, /stop — остановить, /privacy — условия, /forget — удалить память.",
-        "en": "I'm Marko. This is a test chat. /start starts or resumes a conversation, /stop stops messages, /privacy shows data terms, /forget deletes memory.",
-        "es": "Soy Marko. Este es un chat de prueba. /start inicia o reanuda la conversación, /stop detiene mensajes, /privacy muestra condiciones, /forget elimina recuerdos.",
-        "pt": "Sou Marko. Este é um chat de teste. /start inicia ou retoma a conversa, /stop interrompe mensagens, /privacy mostra condições, /forget apaga memórias.",
+        "ru": "Тестовая ролевая переписка с ИИ: Марко — вымышленный персонаж, который остаётся в образе внутри сцены. /start — начать или возобновить разговор, /stop — остановить, /privacy — условия, /forget — удалить память.",
+        "en": "AI roleplay test: Marko is a fictional character who stays in character inside the scene. /start starts or resumes a conversation, /stop stops messages, /privacy shows data terms, /forget deletes memory.",
+        "es": "Prueba de rol con IA: Marko es un personaje ficticio que mantiene su papel dentro de la escena. /start inicia o reanuda la conversación, /stop detiene mensajes, /privacy muestra condiciones, /forget elimina recuerdos.",
+        "pt": "Teste de interpretação com IA: Marko é uma personagem fictícia que mantém o papel dentro da cena. /start inicia ou retoma a conversa, /stop interrompe mensagens, /privacy mostra condições, /forget apaga memórias.",
+    },
+    "preview_closed": {
+        "ru": "Пробная беседа завершена. Для нового теста можно удалить историю через /forget.",
+        "en": "The trial conversation has ended. To begin a new test, you can delete its history with /forget.",
+        "es": "La conversación de prueba ha terminado. Para empezar otra prueba, puedes borrar el historial con /forget.",
+        "pt": "A conversa de teste terminou. Para iniciar outro teste, podes apagar o histórico com /forget.",
+        "fr": "La conversation d’essai est terminée. Pour recommencer un test, tu peux effacer l’historique avec /forget.",
+        "de": "Das Probegespräch ist beendet. Für einen neuen Test kannst du den Verlauf mit /forget löschen.",
+        "ar": "انتهت المحادثة التجريبية. لبدء اختبار جديد يمكنك حذف سجلها باستخدام /forget.",
+        "zh": "试聊已经结束。如需重新测试，可以通过 /forget 删除聊天记录。",
     },
     "stop": {
         "ru": "Переписка остановлена. Память сохранена. Возобновить можно через /start.",
@@ -47,12 +58,6 @@ SERVICE_TEXTS = {
         "en": "Conversation memory deleted. Use /start to begin a new conversation. Older backups expire under retention policy.",
         "es": "Recuerdos eliminados. Usa /start para iniciar una nueva conversación.",
         "pt": "Memórias apagadas. Usa /start para iniciar uma nova conversa.",
-    },
-    "handoff": {
-        "ru": "Тестовая покупка подтверждена без списания. Переписка остановлена. Передача человеку здесь имитируется; реальный оператор не подключён.",
-        "en": "Test purchase confirmed without a charge. Replies are stopped. Handoff is simulated; no human operator is connected.",
-        "es": "Compra de prueba confirmada sin cobro. Las respuestas se han detenido. La transferencia es simulada; no hay operador conectado.",
-        "pt": "Compra de teste confirmada sem cobrança. As respostas foram interrompidas. A transferência é simulada; nenhum operador está conectado.",
     },
     "unsupported": {
         "ru": "В этом прототипе доступны только текстовые сообщения. Содержание фото и голосовых я не вижу.",
@@ -171,6 +176,7 @@ class TelegramService:
         retention_days: int,
         on_control: Callable[[str], Awaitable[None]],
         followups: FollowupService | None = None,
+        on_input: Callable[[ScopeContext, int], Awaitable[None]] | None = None,
     ) -> None:
         self.repository = repository
         self.conversations = conversations
@@ -183,12 +189,14 @@ class TelegramService:
         self.retention_days = retention_days
         self.on_control = on_control
         self.followups = followups
+        self.on_input = on_input
 
     async def ingest(self, raws: list[dict[str, Any]]) -> None:
         received_at = self.clock.now()
         events = [
             normalize_update(raw, self.settings.max_message_chars) for raw in raws
         ]
+        revisions: dict[ScopeContext, int] = {}
         controls: set[str] = set()
         followup_controls: set[str] = set()
 
@@ -204,6 +212,9 @@ class TelegramService:
                         event.user_id,
                         event.chat_id,
                         self.clock.now(),
+                        engine_version="v2",
+                        persona_mode="research_human",
+                        language=canonical_language(event.language_hint or "en"),
                     )
                     scope = conversation.scope
                     await self.memory.repository.ensure_entities(tx, scope)
@@ -236,6 +247,7 @@ class TelegramService:
                                 tx, scope, message.id
                             )
                         conversation = await self.conversations.get(scope.scope_id, tx)
+                        revisions[scope] = conversation.input_revision
                         await self.jobs.schedule(
                             tx,
                             "turn",
@@ -251,6 +263,9 @@ class TelegramService:
                                 )
                             ),
                             scope,
+                            JobPayload(
+                                data={"input_revision": conversation.input_revision}
+                            ),
                         )
                 elif event.kind == "command" or event.command == "stop":
                     await self._command(tx, event, scope)
@@ -278,6 +293,9 @@ class TelegramService:
                     event.update_id,
                     event.reason,
                 )
+        if self.on_input is not None:
+            for scope, revision in revisions.items():
+                await self.on_input(scope, revision)
         for scope_id in controls:
             await self.on_control(scope_id)
         if self.followups is not None:
@@ -295,11 +313,13 @@ class TelegramService:
             if event.kind != "blocked":
                 await self._service(tx, scope, event, "stop")
         elif command == "start":
-            if conversation.purchase_state != "confirmed":
-                await self.conversations.set_control(tx, scope, "enabled")
-                key = "start"
-            else:
-                key = "handoff"
+            await self.conversations.set_control(tx, scope, "enabled")
+            key = (
+                "preview_closed"
+                if conversation.preview_reply_count
+                >= self.commerce.settings.preview_max_replies
+                else "start"
+            )
             await self._service(tx, scope, event, key)
         elif command == "forget":
             await self.conversations.set_control(tx, scope, "paused")
@@ -315,10 +335,10 @@ class TelegramService:
             )
         elif command == "privacy":
             texts = {
-                "ru": f"Это тестовая переписка. Сообщения передаются внешнему сервису обработки и хранятся локально до {self.retention_days} дней с последней активности. /stop останавливает переписку; /forget удаляет сообщения и память. Резервные копии удаляются по тому же сроку. Минимальные записи удаления сохраняются. Не отправляйте чувствительные персональные данные.",
-                "en": f"This is a test chat. Messages are sent to an external processing service and stored locally for up to {self.retention_days} days after last activity. /stop pauses messages; /forget deletes conversation memory. Backups expire under the same retention policy. Minimal deletion records remain. Do not send sensitive personal data.",
-                "es": f"Chat de prueba. Los mensajes se envían a un servicio externo de procesamiento y se guardan localmente hasta {self.retention_days} días tras la última actividad. /stop pausa; /forget elimina mensajes y recuerdos. Las copias caducan con el mismo plazo. Los registros mínimos de eliminación se conservan. No envíes datos sensibles.",
-                "pt": f"Chat de teste. Mensagens são enviadas a um serviço externo de processamento e guardadas localmente até {self.retention_days} dias após a última atividade. /stop pausa; /forget apaga mensagens e memórias. Cópias expiram no mesmo prazo. Registros mínimos de exclusão são mantidos. Não envie dados sensíveis.",
+                "ru": f"Это ролевая симуляция с ИИ. Марко — вымышленный персонаж; его ответы внутри сцены не подтверждают существование реального человека. Сообщения передаются внешнему сервису обработки и хранятся локально до {self.retention_days} дней с последней активности. /stop останавливает переписку; /forget удаляет сообщения и память. Резервные копии удаляются по тому же сроку. Минимальные записи удаления сохраняются. Не отправляйте чувствительные персональные данные.",
+                "en": f"This is an AI roleplay simulation. Marko is fictional; his replies inside the scene do not verify a real human. Messages are sent to an external processing service and stored locally for up to {self.retention_days} days after last activity. /stop pauses messages; /forget deletes conversation memory. Backups expire under the same retention policy. Minimal deletion records remain. Do not send sensitive personal data.",
+                "es": f"Simulación de rol con IA. Marko es ficticio; sus respuestas dentro de la escena no verifican a una persona real. Los mensajes se envían a un servicio externo de procesamiento y se guardan localmente hasta {self.retention_days} días tras la última actividad. /stop pausa; /forget elimina mensajes y recuerdos. Las copias caducan con el mismo plazo. Los registros mínimos de eliminación se conservan. No envíes datos sensibles.",
+                "pt": f"Simulação de interpretação com IA. Marko é fictício; as respostas na cena não comprovam uma pessoa real. Mensagens são enviadas a um serviço externo de processamento e guardadas localmente até {self.retention_days} dias após a última atividade. /stop pausa; /forget apaga mensagens e memórias. Cópias expiram no mesmo prazo. Registros mínimos de exclusão são mantidos. Não envie dados sensíveis.",
             }
             text = texts.get(conversation.language, texts["en"])
             if self.settings.followup_enabled:

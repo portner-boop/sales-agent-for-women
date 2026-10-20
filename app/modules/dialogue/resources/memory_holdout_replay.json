@@ -1,0 +1,48 @@
+[
+  {
+    "id": "holdout-Mira",
+    "steps": [
+      {
+        "message": "Hi Marko, I'm Mira. I have two daughters: Inez is seven and Yara is ten. Paco is my four-year-old dog",
+        "language": "en"
+      },
+      {
+        "message": "Поправлю: Яре уже одиннадцать, а Пако пять. Инес всё ещё семь",
+        "language": "ru"
+      },
+      {
+        "message": "У моего брата Даниила есть дочь Ева, ей шесть. А Молли — наша соседка, не кошка",
+        "language": "ru"
+      },
+      {
+        "message": "Представь, мы с Пако улетели на Юпитер и там выбираем музыку для танцев",
+        "language": "ru"
+      },
+      {
+        "message": "Let's switch to English for a bit. I like when we can have a silly conversation without taking it too seriously",
+        "language": "en"
+      },
+      {
+        "message": "А теперь ответь по-русски: как меня зовут, сколько у меня детей, их имена и возрасты? Кто такие Пако, Ева и Молли? И полёт на Юпитер был настоящим?",
+        "language": "ru"
+      }
+    ]
+  },
+  {
+    "id": "holdout-Lucia",
+    "steps": [
+      {
+        "message": "Hola, soy Lucía. Vivo con mi gato Nilo de tres años. Mi hermana se llama Rosa y tiene un hijo, Tomás, de ocho años",
+        "language": "es"
+      },
+      {
+        "message": "On continue en français. Petite correction : Nilo a quatre ans maintenant. Et Rosa est ma sœur, pas ma fille",
+        "language": "fr"
+      },
+      {
+        "message": "Volvamos al español. ¿Cómo me llamo, quién es Nilo y cuántos años tiene ahora? ¿Quiénes son Rosa y Tomás?",
+        "language": "es"
+      }
+    ]
+  }
+]

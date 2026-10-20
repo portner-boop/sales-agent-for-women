@@ -4,9 +4,7 @@ from contextlib import AsyncExitStack
 from pathlib import Path
 from typing import Any
 
-from langgraph.checkpoint.sqlite.aio import AsyncSqliteSaver
-
-from app.modules.agent.context import ContextBuilder, TokenCounter
+from app.modules.agent.dialogue_engine import service_notice
 from app.modules.agent.entities import LanguageModel
 from app.modules.agent.gateway import GatewayModel
 from app.modules.agent.repository import AgentRepository
@@ -18,12 +16,15 @@ from app.modules.delivery.entities import ChannelSender
 from app.modules.delivery.repository import DeliveryRepository
 from app.modules.delivery.schemas import OutboxDraft
 from app.modules.delivery.service import DeliveryService
+from app.modules.dialogue.context import build_request
+from app.modules.dialogue.handoff import build_handoff
+from app.modules.dialogue.schemas import HandoffSnapshot
+from app.modules.dialogue.tokens import ContextBudget, TokenCounter
 from app.modules.followups.repository import FollowupRepository
 from app.modules.followups.service import FollowupService
 from app.modules.jobs.entities import Job
 from app.modules.jobs.repository import JobRepository
 from app.modules.jobs.service import JobService
-from app.modules.memory.compaction import CompactionService
 from app.modules.memory.repository import MemoryRepository
 from app.modules.memory.service import MemoryService
 from app.modules.telegram.adapter import TelegramSender
@@ -34,7 +35,7 @@ from app.shared.config import Settings
 from app.shared.control import start_control
 from app.shared.entities import Clock, ScopeContext
 from app.shared.operations import ProcessLock, expire_backups
-from app.shared.storage import Database, Transaction, fetchall
+from app.shared.storage import Database, Transaction, fetchall, fetchone
 
 logger = logging.getLogger(__name__)
 
@@ -89,20 +90,13 @@ class Application:
         migrations = Path(__file__).parent / "migrations"
         self.stack.push_async_callback(self.database.close)
         await self.database.open(migrations)
-        self.checkpointer = await self.stack.enter_async_context(
-            AsyncSqliteSaver.from_conn_string(str(directory / "checkpoints.db"))
-        )
-        await self.checkpointer.setup()
+
         self.conversations = ConversationRepository(self.database)
         self.jobs = JobRepository(self.database)
         self.delivery_repository = DeliveryRepository(self.database)
         self.followup_repository = FollowupRepository(self.database)
         self.commerce = CommerceService(
-            CommerceRepository(self.database),
-            self.conversations,
-            self.clock,
-            self.settings.commerce,
-            self.settings.runtime.tester_ids,
+            CommerceRepository(self.database), self.settings.commerce
         )
         self.memory = MemoryService(
             MemoryRepository(self.database),
@@ -111,12 +105,9 @@ class Application:
             directory / "deletions.jsonl",
             self._purge_artifacts,
         )
-        await self.memory.apply_tombstones(self.checkpointer.adelete_thread)
-        await self.commerce.repository.initialize(
-            self.settings.commerce.package_minutes
-        )
+        await self.memory.apply_tombstones()
         await self.jobs.recover()
-        await self.delivery_repository.recover()
+        await self.delivery_repository.recover(self.clock.now())
         if self.settings.runtime.kill_switch:
             await self.delivery_repository.kill_switch(True)
         counter = TokenCounter(self.settings.llm.model)
@@ -124,24 +115,12 @@ class Application:
             AgentRepository(self.database),
             self.conversations,
             self.memory,
-            ContextBuilder(
-                self.conversations,
-                self.memory.repository,
-                self.settings.memory,
-                counter,
-                self.clock,
-                self.settings.llm.model,
-            ),
+            ContextBudget(self.settings.memory, counter),
             self.delivery_repository,
             self.commerce,
             self.model,
             self.clock,
             self.settings.runtime,
-            self.checkpointer,
-            self._preview_closed,
-        )
-        self.compaction = CompactionService(
-            self.memory, self.conversations, self.model, counter, self.settings.memory
         )
         self.followups = FollowupService(
             self.followup_repository,
@@ -154,7 +133,6 @@ class Application:
             self.delivery_repository,
             self.conversations,
             self.commerce,
-            self.jobs,
             self.sender,
             self.clock,
             self.followups.after_reply,
@@ -171,9 +149,13 @@ class Application:
             self.settings.storage.retention_days,
             self._cancel_scope,
             self.followups,
+            on_input=self.agent.cancel_obsolete,
         )
         self.turn_worker = JobService(
-            self.jobs, self.clock, {"turn": self._turn, "followup": self._followup}
+            self.jobs,
+            self.clock,
+            {"turn": self._turn, "followup": self._followup},
+            on_terminal=self._turn_failed,
         )
         self.control_worker = JobService(
             self.jobs,
@@ -186,16 +168,12 @@ class Application:
             self.jobs,
             self.clock,
             {
-                "compact": self.compaction.process,
                 "backup": self._backup,
                 "retention": self._retention,
             },
         )
         for path in directory.glob("*.db*"):
             path.chmod(0o600)
-
-    async def _preview_closed(self, tx: Transaction, scope: ScopeContext) -> None:
-        await self.followups.cancel_pending(tx, scope)
 
     async def _turn(self, job: Job) -> None:
         if job.scope is not None and isinstance(self.sender, TelegramSender):
@@ -212,11 +190,54 @@ class Application:
                 return
         await self.agent.process(job)
 
+    async def _turn_failed(self, job: Job, code: str) -> None:
+        if job.kind != "turn" or job.scope is None:
+            return
+        scope = job.scope
+        revision = job.payload.get("input_revision")
+        if any(
+            run.turn.scope == scope and run.turn.input_revision == revision
+            for run in self.agent.active.values()
+        ):
+            return
+
+        async def notify(tx: Transaction) -> None:
+            current = await self.conversations.get(scope.scope_id, tx)
+            if (
+                current.scope != scope
+                or current.input_revision != revision
+                or current.control_state != "enabled"
+                or await self.delivery_repository.is_killed(tx)
+                or not await fetchone(
+                    tx,
+                    "SELECT 1 FROM messages WHERE scope_id=? AND epoch=? AND pending=1 LIMIT 1",
+                    (scope.scope_id, scope.epoch),
+                )
+            ):
+                return
+            turn = await self.conversations.fail_pending(tx, scope, self.clock.now())
+            if turn is None:
+                return
+            await self.delivery_repository.prepare(
+                tx,
+                current.snapshot,
+                OutboxDraft(
+                    action_key=f"turn-failure:{scope.scope_id}:{scope.epoch}:{revision}",
+                    kind="service",
+                    text=service_notice(current.language, "failure"),
+                    deadline=self.clock.now() + 30,
+                ),
+                self.clock.now(),
+                {"origin": "turn_failure", "error_code": code},
+                turn.id,
+            )
+
+        await self.database.write(notify)
+
     async def _cancel_scope(self, scope_id: str) -> None:
         await asyncio.gather(
             self.agent.cancel_scope(scope_id),
             self.delivery.cancel_scope(scope_id),
-            self.compaction.cancel_scope(scope_id),
             self.followups.cancel_scope(scope_id),
         )
 
@@ -238,7 +259,6 @@ class Application:
         await self.jobs.purge(tx, scope_id)
         await self.delivery_repository.purge(tx, scope_id)
         await AgentRepository(self.database).purge(tx, scope_id)
-        await self.commerce.repository.purge(tx, scope_id)
         await TelegramRepository(self.database, self.channel).purge(tx, scope_id)
         await self.conversations.purge(tx, scope_id, new_epoch)
 
@@ -262,7 +282,7 @@ class Application:
                 self.clock.now(),
             )
 
-        await self.memory.forget(job.scope, self.checkpointer.adelete_thread, confirm)
+        await self.memory.forget(job.scope, confirm)
 
     async def _backup(self, job: Job) -> None:
         await self.memory.backup()
@@ -277,9 +297,7 @@ class Application:
             )
         for row in rows:
             await self._cancel_scope(row["id"])
-            await self.memory.forget(
-                ScopeContext(row["id"], row["epoch"]), self.checkpointer.adelete_thread
-            )
+            await self.memory.forget(ScopeContext(row["id"], row["epoch"]))
 
         async def quarantine(tx: Transaction) -> None:
             await tx.execute(
@@ -289,6 +307,24 @@ class Application:
 
         await self.database.write(quarantine)
         await asyncio.to_thread(expire_backups, self.settings.storage.directory, cutoff)
+
+    async def handoff_snapshot(self, scope: ScopeContext) -> HandoffSnapshot:
+        async with self.database.read() as tx:
+            current = await self.conversations.get(scope.scope_id, tx)
+            history = await self.conversations.messages(scope, tx=tx)
+            items = await self.memory.repository.items(scope, tx=tx)
+            transition = await self.commerce.transition_state(current, tx)
+        request = build_request(
+            current,
+            history,
+            (),
+            boundaries=[item for item in items if item["kind"] == "boundary"],
+            transition=transition,
+            now=self.clock.now(),
+        )
+        return build_handoff(
+            request, facts=[item for item in items if item["kind"] != "boundary"]
+        )
 
     async def schedule_maintenance(self) -> None:
         now = self.clock.now()
@@ -307,8 +343,11 @@ class Application:
 
     async def maintenance(self) -> None:
         while True:
-            await self.schedule_maintenance()
-            logger.info("health %s", await self.metrics())
+            try:
+                await self.schedule_maintenance()
+                logger.info("health %s", await self.metrics())
+            except Exception:
+                logger.exception("maintenance_iteration_failed")
             await asyncio.sleep(30)
 
     async def start_controls(self) -> None:
@@ -335,9 +374,6 @@ class Application:
         metrics: dict[str, Any] = {
             "writer_queue": self.database.queue_size,
             "active_generations": len(self.agent.active),
-            "active_compactions": sum(
-                len(tasks) for tasks in self.compaction.tasks.values()
-            ),
             "active_sends": sum(len(tasks) for tasks in self.delivery.tasks.values()),
             "configured_llm_concurrency": self.settings.runtime.llm_concurrency,
         }
@@ -365,6 +401,4 @@ class Application:
             await self.agent.cancel_scope(scope_id)
         for scope_id in list(self.delivery.tasks):
             await self.delivery.cancel_scope(scope_id)
-        for scope_id in list(self.compaction.tasks):
-            await self.compaction.cancel_scope(scope_id)
         await self.stack.aclose()

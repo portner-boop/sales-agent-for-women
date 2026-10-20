@@ -1,0 +1,18 @@
+[
+  {
+    "id":"turn-selection-en",
+    "steps":[
+      {"message":"hey Marko, im Anna. dropped my toast on the floor, mornings going great", "language":"en"},
+      {"message":"enough about my breakfast. how did your weekend go?", "language":"en"},
+      {"message":"were you alone sunday evening?", "language":"en"},
+      {"message":"im not here to interview you. flirt with me a little", "language":"en"},
+      {"message":"i listen to soul when i cook, what do you normally play?", "language":"en"},
+      {"wait_seconds":60},
+      {"wait_seconds":120},
+      {"message":"back now. i left the phone in the kitchen. Nina Simone is usually my first choice", "language":"en"},
+      {"message":"what do you remember about me then?", "language":"en"},
+      {"message":"im going to bed. goodnight, dont message first tonight", "language":"en"},
+      {"wait_seconds":240}
+    ]
+  }
+]

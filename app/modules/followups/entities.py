@@ -11,3 +11,6 @@ class FollowupTicket:
     anchor_id: str
     run_at: float
     expires_at: float
+    ordinal: int = 1
+    silence_started_at: float = 0
+    requires_response: bool = False

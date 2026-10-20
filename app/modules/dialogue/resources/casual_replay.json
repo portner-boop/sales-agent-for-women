@@ -1,0 +1,66 @@
+[
+  {
+    "id": "casual-en",
+    "steps": [
+      {
+        "message": "hi Marko",
+        "language": "en"
+      },
+      {
+        "message": "im Nora. I have a cat called Bruno, I just got home and have a few minutes",
+        "language": "en"
+      },
+      {
+        "message": "what did you do this weekend?",
+        "language": "en"
+      },
+      {
+        "message": "and sunday? were you alone?",
+        "language": "en"
+      },
+      {
+        "message": "only charming? i was hoping you would say something more about me ;)",
+        "language": "en"
+      },
+      {
+        "message": "goodnight, dont message first",
+        "language": "en"
+      },
+      {
+        "wait_seconds": 240
+      }
+    ]
+  },
+  {
+    "id": "casual-ru",
+    "steps": [
+      {
+        "message": "Привет, Марко",
+        "language": "ru"
+      },
+      {
+        "message": "Я Нора. Кот Бруно занял всё кресло, но на пару минут поболтать могу",
+        "language": "ru"
+      },
+      {
+        "message": "Как выходные прошли? Только не составляй отчёт, просто поболтать хочу",
+        "language": "ru"
+      },
+      {
+        "message": "А в воскресенье один был?",
+        "language": "ru"
+      },
+      {
+        "message": "Ну и всё? Я к тебе заигрываю, а не характеристику прошу",
+        "language": "ru"
+      },
+      {
+        "message": "Ладно, я засыпаю, не пиши потом",
+        "language": "ru"
+      },
+      {
+        "wait_seconds": 240
+      }
+    ]
+  }
+]
