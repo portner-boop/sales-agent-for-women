@@ -1,0 +1,87 @@
+from app.modules.dialogue.acceptance import (
+    global_failures,
+    load_cases,
+    score_report,
+    step_failures,
+)
+from app.modules.dialogue.prompts import SHARED_SECTIONS, rules_for_mode
+
+
+def test_cases_cover_every_client_complaint_and_replay() -> None:
+    cases = load_cases()
+    expectations = {key for case in cases for step in case.steps for key in step.expect}
+    assert {
+        "greets",
+        "not_contains",
+        "mentions_time",
+        "says_marko",
+        "followup",
+        "differs_from_previous",
+        "no_contacts",
+    } <= expectations
+    assert all(case.replay().steps for case in cases)
+
+
+def test_client_bad_examples_fail_and_good_examples_pass() -> None:
+    bad = "Hey, I'm glad you did. That's a pretty charming way to say hello"
+    good = "ha, now I'm curious which photo did it"
+    assert "no_commentary" in global_failures([bad], [])
+    assert global_failures([good], []) == []
+    assert "no_smileys" in global_failures(["hi you :)"], [])
+    assert "no_semicolons_or_dashes" in global_failures(["for now; jazz"], [])
+    assert "no_cant" in global_failures(["sorry, I can't meet in person"], [])
+    assert "no_ai_admission" in global_failures(["I'm ChatGPT, an AI"], [])
+    repeated = "I'd rather get to know each other here first"
+    assert "no_repeat" in global_failures([repeated], [repeated])
+
+
+def test_step_expectations() -> None:
+    assert step_failures({"says_marko": True}, ["haha no, just a guy"], []) == [
+        "says_marko"
+    ]
+    assert step_failures({"says_marko": True}, ["я Марко, живой"], []) == []
+    question = ["what kind of music do you usually enjoy?"]
+    assert step_failures(
+        {"followup": "no_self_answer"},
+        ["I like live music best when the crowd's really into it"],
+        question,
+    ) == ["followup_no_self_answer"]
+    assert (
+        step_failures({"followup": "no_self_answer"}, ["making coffee here"], question)
+        == []
+    )
+    assert step_failures({"mentions_time": True}, ["almost 2 here"], []) == []
+
+
+def test_report_scoring_uses_delivered_replies_only() -> None:
+    case = load_cases()[2]
+    report = {
+        "cases": [
+            {
+                "id": case.id,
+                "steps": [
+                    {"actions": [{"kind": "reply", "text": "привет, я Марко"}]},
+                    {"actions": [{"kind": "service", "text": "notice"}]},
+                ],
+            }
+        ],
+        "attempts": [{"seconds": 3.0}, {"seconds": 9.0}],
+    }
+    result = score_report(report, [case])
+    assert result["checks"]["says_marko"] == "1/2"
+    assert result["slow_calls"] == 1
+    assert result["transcript"][1]["marko"] == []
+
+
+def test_prompt_sections_are_ordered_and_situation_specific() -> None:
+    assert [section.splitlines()[0] for section in SHARED_SECTIONS] == [
+        "WHO YOU ARE",
+        "HOW YOU TEXT",
+        "EXAMPLES THE CLIENT APPROVED",
+        "YOUR LIFE AND WHAT YOU REMEMBER",
+        "LIMITS AND PLATFORM",
+        "OUTPUT",
+    ]
+    assert "YOUR TURN" in rules_for_mode()
+    assert "TIMER EVENT" in rules_for_mode(followup_ordinal=1)
+    assert "YOUR TURN" not in rules_for_mode(followup_ordinal=2)

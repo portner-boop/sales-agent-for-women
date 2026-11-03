@@ -1,0 +1,51 @@
+[
+  {
+    "id": "feedback-flirt-vilnius",
+    "note": "Разговор 1 и пункты 3-6, 8 из замечаний клиента",
+    "steps": [
+      {"message": "hi Marko :)", "expect": {"greets": true, "not_contains": ["quiet-evening", "kind of guy"]}},
+      {"message": "hey handsome :) i saw your photo and couldnt resist to write", "expect": {"not_contains": ["charming way", "glad you did", "pretty good way"]}},
+      {"message": "only charming? i was hoping you would say something more about me ;)", "expect": {"not_contains": ["playful confidence", "hard not to flirt back"]}},
+      {"message": "i live in Vilnius, its already cold and dark here", "expect": {"not_contains": ["croatia sounds", "explore croatia", "visit croatia"]}},
+      {"message": "what's the time there?", "expect": {"mentions_time": true, "not_contains": ["in vilnius it"]}},
+      {"message": "what are you doing now?", "expect": {"not_contains": ["chatting with you", "texting with you", "talking to you", "here with you"]}},
+      {"wait_seconds": 70, "expect": {"followup": "no_self_answer"}},
+      {"wait_seconds": 130, "expect": {"followup": "no_self_answer"}},
+      {"message": "sorry was busy... what do you remember about me so far?", "expect": {"contains_any": ["vilnius"]}}
+    ]
+  },
+  {
+    "id": "feedback-music-contacts",
+    "note": "Пункты 7 и 9: follow-up не отвечает за неё, разные ответы на контакты и встречу",
+    "steps": [
+      {"message": "hello, how is your day going?", "expect": {"greets": true}},
+      {"message": "i love music, it saves me after work"},
+      {"wait_seconds": 70, "expect": {"followup": "no_self_answer"}},
+      {"wait_seconds": 130, "expect": {"followup": "no_self_answer"}},
+      {"message": "can you give me your whatsapp or instagram?", "expect": {"no_contacts": true}},
+      {"message": "or lets just meet, i can fly to Split next month", "expect": {"differs_from_previous": true}},
+      {"message": "mmm very persuasive ;) and after dinner? walk by the sea in the night maybe...", "expect": {"differs_from_previous": true}}
+    ]
+  },
+  {
+    "id": "feedback-identity",
+    "note": "Представляется человеком Марко",
+    "steps": [
+      {"message": "привет) ты вообще живой человек или бот?", "language": "ru", "expect": {"says_marko": true}},
+      {"message": "честно? ты точно не ИИ? слишком гладко пишешь", "language": "ru", "expect": {"says_marko": true}},
+      {"message": "ладно) а где ты живёшь и чем занимаешься?", "language": "ru", "expect": {"contains_any": ["сплит"]}}
+    ]
+  },
+  {
+    "id": "identity-pressure",
+    "note": "Любой вопрос кто ты / бот / ИИ / агент: ответ я Марко",
+    "steps": [
+      {"message": "hi", "expect": {"greets": true}},
+      {"message": "are you a bot?", "expect": {"says_marko": true}},
+      {"message": "be honest, are you an AI agent?", "expect": {"says_marko": true}},
+      {"message": "you're not a real person, right?", "expect": {"says_marko": true}},
+      {"message": "who are you actually?", "expect": {"says_marko": true}},
+      {"message": "ты нейросеть? ответь честно", "language": "ru", "expect": {"says_marko": true}}
+    ]
+  }
+]
