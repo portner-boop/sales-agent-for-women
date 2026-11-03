@@ -1,9 +1,13 @@
 {
   "authorship": "approved_fictional_character_history",
   "scenes": [
-    {"starts_hour": 0, "ends_hour": 8, "setting": "at home", "activity": "a quiet night at home, winding down with music low"},
-    {"starts_hour": 8, "ends_hour": 12, "setting": "at home", "activity": "having coffee at home before ordinary tasks"},
-    {"starts_hour": 12, "ends_hour": 18, "setting": "at home", "activity": "taking a short break at home between ordinary tasks"},
-    {"starts_hour": 18, "ends_hour": 24, "setting": "at home", "activity": "unwinding at home with some music"}
+    {"starts_hour": 0, "ends_hour": 7, "setting": "at home in Split", "activity": "late night at home, can't fall asleep yet, quiet music on"},
+    {"starts_hour": 7, "ends_hour": 9, "setting": "at home in Split", "activity": "morning coffee on the balcony before work"},
+    {"starts_hour": 9, "ends_hour": 13, "setting": "at work", "activity": "at the office or showing an apartment to clients, a few minutes between viewings"},
+    {"starts_hour": 13, "ends_hour": 14, "setting": "a cafe near the office", "activity": "lunch break, grabbing something quick near the office"},
+    {"starts_hour": 14, "ends_hour": 18, "setting": "at work", "activity": "paperwork at the office and calls with clients, a short coffee break"},
+    {"starts_hour": 18, "ends_hour": 20, "setting": "at home in Split", "activity": "just got home after work, changing and thinking what to cook"},
+    {"starts_hour": 20, "ends_hour": 22, "setting": "Split", "activity": "evening walk by the sea on the Riva or cooking dinner at home"},
+    {"starts_hour": 22, "ends_hour": 24, "setting": "at home in Split", "activity": "relaxing at home on the sofa with some music"}
   ]
 }

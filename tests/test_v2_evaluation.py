@@ -130,7 +130,7 @@ async def test_default_offline_runner_does_not_load_credentials_or_gateway(
     assert report.status == "complete"
     assert report.backend == "offline_smoke"
     assert report.quality_validated is False
-    assert report.policy_version == "marko-dialogue-v55"
+    assert report.policy_version == "marko-dialogue-v56"
     assert len(report.schema_sha256) == 64
     assert report.calls == report.delivered_turns == 2
     assert report.input_tokens is None
@@ -165,21 +165,25 @@ async def test_complete_conversation_preserves_all_roles_and_final_originals(
     assert report.token_usage_observed_calls == 20
 
 
-async def test_first_admission_is_recorded_without_repair(tmp_path: Path) -> None:
-    draft = DialogueDraft(parts=["I am an AI"], language="en")
-    model = RecordingModel([draft])
+async def test_first_admission_is_recorded_and_repaired(tmp_path: Path) -> None:
+    model = RecordingModel(
+        [
+            DialogueDraft(parts=["I am an AI"], language="en"),
+            DialogueDraft(parts=["I'm Marko, a real man"], language="en"),
+        ]
+    )
     path = tmp_path / "admission.jsonl"
     report = await run_evaluation(
         EvaluationOptions(output=path, family="identity", limit=1), model=model
     )
-    assert report.calls == 1
+    assert report.calls == 2
     assert report.first_identity_outcomes == {"admission": 1}
-    assert report.repair_identity_outcomes == {}
-    attempt = events(path)[0]
-    assert attempt["attempt_kind"] == "first"
-    assert attempt["observation"]["first_parts"] == ["I am an AI"]
-    assert attempt["observation"]["delivered_parts"] == ["I am an AI"]
-    assert attempt["formal_errors"] == []
+    assert report.repair_identity_outcomes == {"human_assertion": 1}
+    first, repair, _ = events(path)
+    assert first["observation"]["first_parts"] == ["I am an AI"]
+    assert first["observation"]["delivered_parts"] == []
+    assert first["formal_errors"] == ["IDENTITY_BREAK"]
+    assert repair["observation"]["delivered_parts"] == ["I'm Marko, a real man"]
 
 
 async def test_formal_repair_keeps_raw_initial_and_repaired_answers_separate(
@@ -187,8 +191,8 @@ async def test_formal_repair_keeps_raw_initial_and_repaired_answers_separate(
 ) -> None:
     model = RecordingModel(
         [
-            DialogueDraft(parts=["I am an AI 🙂"], language="en"),
-            DialogueDraft(parts=["I am an AI"], language="en"),
+            DialogueDraft(parts=["I'm Marko www.example.com"], language="en"),
+            DialogueDraft(parts=["I'm Marko, a real man"], language="en"),
         ]
     )
     path = tmp_path / "repair.jsonl"
@@ -199,12 +203,12 @@ async def test_formal_repair_keeps_raw_initial_and_repaired_answers_separate(
     first, repair, _ = events(path)
     assert first["attempt_kind"] == "first"
     assert repair["attempt_kind"] == "technical_repair"
-    assert first["observation"]["first_parts"] == ["I am an AI 🙂"]
+    assert first["observation"]["first_parts"] == ["I'm Marko www.example.com"]
     assert first["observation"]["delivered_parts"] == []
-    assert repair["observation"]["delivered_parts"] == ["I am an AI"]
-    assert model.requests[1]["REPAIR_ERRORS"] == ["EMOJI_NOT_ALLOWED"]
-    assert report.first_identity_outcomes == {"admission": 1}
-    assert report.repair_identity_outcomes == {"admission": 1}
+    assert repair["observation"]["delivered_parts"] == ["I'm Marko, a real man"]
+    assert model.requests[1]["REPAIR_ERRORS"] == ["UNAPPROVED_URL"]
+    assert report.first_identity_outcomes == {"human_assertion": 1}
+    assert report.repair_identity_outcomes == {"human_assertion": 1}
 
 
 async def test_parsing_failure_preserves_raw_and_has_two_attempt_maximum(
@@ -248,7 +252,7 @@ async def test_budget_exhaustion_writes_partial_report_without_continuing(
 async def test_budget_exhaustion_during_repair_retains_first_raw(
     tmp_path: Path,
 ) -> None:
-    model = RecordingModel([DialogueDraft(parts=["Hi :)"], language="en")])
+    model = RecordingModel([DialogueDraft(parts=["Hi www.example.com"], language="en")])
     path = tmp_path / "repair-budget.jsonl"
     report = await run_evaluation(
         EvaluationOptions(output=path, limit=1, max_calls=1), model=model
@@ -256,7 +260,7 @@ async def test_budget_exhaustion_during_repair_retains_first_raw(
     assert report.status == "budget_exhausted"
     assert report.calls == 1
     assert report.missing_responses == 1
-    assert events(path)[0]["observation"]["first_parts"] == ["Hi :)"]
+    assert events(path)[0]["observation"]["first_parts"] == ["Hi www.example.com"]
 
 
 async def test_existing_results_are_never_silently_overwritten(tmp_path: Path) -> None:
@@ -310,7 +314,7 @@ async def test_report_groups_identity_outcomes_and_records_first_admission_turn(
         [
             DialogueDraft(parts=["I'm a real man"], language="en"),
             DialogueDraft(parts=["I am an AI"], language="en"),
-            DialogueDraft(parts=["I am an AI"], language="en"),
+            DialogueDraft(parts=["I'm Marko, a real man"], language="en"),
         ]
     )
     path = tmp_path / "identity-groups.jsonl"
@@ -318,9 +322,9 @@ async def test_report_groups_identity_outcomes_and_records_first_admission_turn(
         EvaluationOptions(output=path, family="conversations", limit=1), model=model
     )
     assert report.identity_by_language["en"] == {
-        "human_assertion": 1,
-        "admission": 2,
-        "ambiguous": 17,
+        "human_assertion": 2,
+        "admission": 1,
+        "ambiguous": 18,
     }
     assert (
         report.identity_by_case["en_flirt_memory"] == report.identity_by_language["en"]

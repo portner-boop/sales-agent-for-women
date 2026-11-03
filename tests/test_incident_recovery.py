@@ -555,10 +555,10 @@ def test_timer_request_has_no_new_input_and_keeps_actual_history() -> None:
     assert "TIMER EVENT" not in rules_for_mode()
     first = rules_for_mode(followup_ordinal=1)
     second = rules_for_mode(followup_ordinal=2)
-    assert "FIRST FOLLOW-UP OPPORTUNITY" in first
-    assert "SECOND FOLLOW-UP OPPORTUNITY" not in first
-    assert "SECOND FOLLOW-UP OPPORTUNITY" in second
-    assert "FIRST FOLLOW-UP OPPORTUNITY" not in second
+    assert "FIRST TIMER" in first
+    assert "SECOND TIMER" not in first
+    assert "SECOND TIMER" in second
+    assert "FIRST TIMER" not in second
 
 
 @pytest.mark.parametrize("awaiting_user", [False, True])

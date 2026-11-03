@@ -1,4 +1,5 @@
 omit_terminal_period = true
+strip_smileys = true
 
 [punctuation_replacements]
 ";" = ","
@@ -6,3 +7,5 @@ omit_terminal_period = true
 "؛" = "،"
 "—" = "-"
 "–" = "-"
+"’" = "'"
+"‘" = "'"

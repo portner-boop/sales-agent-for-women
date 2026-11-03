@@ -51,6 +51,8 @@ from app.shared.entities import (
 )
 from app.shared.storage import Transaction, fetchone
 
+SOFT_ERRORS = {"REPEATED_REPLY"}
+
 
 def service_notice(language: str, kind: str) -> str:
     notices = {
@@ -427,6 +429,10 @@ class DialogueEngine:
                 )
                 metrics["grounding_errors"] = grounding_errors(draft, run.request)
                 errors = validate_draft(draft, run.request)
+                if errors and set(errors) <= SOFT_ERRORS:
+                    if attempt + 1 >= self.settings.dialogue_max_calls:
+                        metrics["accepted_soft_errors"] = errors
+                        errors = []
                 if not errors:
                     run.draft = draft
                     return {}
@@ -581,7 +587,11 @@ class DialogueEngine:
             >= self.commerce.settings.preview_max_replies
         )
 
-        rendered_parts = [CHAT_RENDERING.render(text) for text in draft.delivery_parts]
+        rendered_parts = [
+            rendered
+            for text in draft.delivery_parts
+            if (rendered := CHAT_RENDERING.render(text)).strip()
+        ]
         timing = DeliveryTiming(self.settings.reply_timing)
         durations = [timing.duration(text) for text in rendered_parts]
 
@@ -661,15 +671,12 @@ class DialogueEngine:
                     },
                     run.turn.id,
                 )
-            if invitation or final:
-                text = service_notice(
-                    draft.language, "invitation" if invitation else "closing"
+            if invitation:
+                text = service_notice(draft.language, "invitation")
+                text += (
+                    "\n"
+                    + self.commerce.transition_text(draft.language).splitlines()[-1]
                 )
-                if invitation:
-                    text += (
-                        "\n"
-                        + self.commerce.transition_text(draft.language).splitlines()[-1]
-                    )
                 await self.delivery.prepare(
                     tx,
                     latest.snapshot,
@@ -682,10 +689,8 @@ class DialogueEngine:
                     ),
                     now,
                     {
-                        "origin": (
-                            "platform_redirect" if invitation else "preview_closing"
-                        ),
-                        "platform_transition": invitation,
+                        "origin": "platform_redirect",
+                        "platform_transition": True,
                         "reply": text,
                         "response_language": draft.language,
                         "conversation_action": draft.conversation_action,

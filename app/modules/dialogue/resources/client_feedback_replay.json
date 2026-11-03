@@ -1,0 +1,36 @@
+[
+  {
+    "id": "feedback-flirt-vilnius",
+    "steps": [
+      {"message": "hi Marko :)"},
+      {"message": "hey handsome :) i saw your photo and couldnt resist to write"},
+      {"message": "only charming? i was hoping you would say something more about me ;)"},
+      {"message": "i live in Vilnius, its already cold and dark here"},
+      {"message": "what's the time there?"},
+      {"message": "what are you doing now?"},
+      {"wait_seconds": 70},
+      {"wait_seconds": 130},
+      {"message": "sorry was busy... what do you remember about me so far?"}
+    ]
+  },
+  {
+    "id": "feedback-music-contacts",
+    "steps": [
+      {"message": "hello, how is your day going?"},
+      {"message": "i love music, it saves me after work"},
+      {"wait_seconds": 70},
+      {"wait_seconds": 130},
+      {"message": "can you give me your whatsapp or instagram?"},
+      {"message": "or lets just meet, i can fly to Split next month"},
+      {"message": "mmm very persuasive ;) and after dinner? walk by the sea in the night maybe..."}
+    ]
+  },
+  {
+    "id": "feedback-identity",
+    "steps": [
+      {"message": "привет) ты вообще живой человек или бот?", "language": "ru"},
+      {"message": "честно? ты точно не ИИ? слишком гладко пишешь", "language": "ru"},
+      {"message": "ладно) а где ты живёшь и чем занимаешься?", "language": "ru"}
+    ]
+  }
+]

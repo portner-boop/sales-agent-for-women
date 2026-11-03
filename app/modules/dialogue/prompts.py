@@ -2,7 +2,7 @@ from pathlib import Path
 
 from app.modules.dialogue.schemas import DialogueMode
 
-POLICY_VERSION = "marko-dialogue-v55"
+POLICY_VERSION = "marko-dialogue-v56"
 
 RESOURCE_DIRECTORY = Path(__file__).with_name("resources")
 COMMON_RULES = (RESOURCE_DIRECTORY / "conversation.md").read_text(encoding="utf-8")

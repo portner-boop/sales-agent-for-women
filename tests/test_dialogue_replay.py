@@ -88,13 +88,13 @@ async def test_replay_keeps_formal_rejection_and_repair_diagnostics(
     tmp_path: Path,
 ) -> None:
     model = ScriptedModel()
-    model.responses["dialogue"].append({"parts": ["🙂"], "language": "en"})
+    model.responses["dialogue"].append({"parts": ["www.example.com"], "language": "en"})
     case = ReplayCase(id="repair", steps=[ReplayStep(message="hello")])
     report = await run_replay(
         [case], Settings(), model, tmp_path / "repair.json", max_calls=3
     )
     assert report["calls"] == 2
     attempts = report["cases"][0]["steps"][0]["attempts"]
-    assert attempts[0]["metrics"]["validation_errors"] == ["EMOJI_NOT_ALLOWED"]
+    assert attempts[0]["metrics"]["validation_errors"] == ["UNAPPROVED_URL"]
     assert attempts[1]["metrics"]["validation_errors"] == []
-    assert report["cases"][0]["steps"][0]["actions"][0]["text"] != "🙂"
+    assert report["cases"][0]["steps"][0]["actions"][0]["text"] != "www.example.com"

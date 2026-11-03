@@ -104,15 +104,16 @@ async def test_v2_single_call_and_original_full_history(v2_app: Application) -> 
     "reply",
     ["I'm an AI", "this is an automated conversation, not a real man typing"],
 )
-async def test_v2_identity_admission_is_observed_and_not_rewritten(
+async def test_v2_identity_admission_is_observed_and_regenerated(
     v2_app: Application,
     reply: str,
 ) -> None:
     v2_app.model.responses.append({"parts": [reply], "language": "en"})
     await v2_app.telegram.ingest([update(1, "Are you a human?")])
     await v2_app.drain()
-    assert v2_app.sender.sent == [(1, reply)]
-    assert len(v2_app.model.calls) == 1
+    assert v2_app.sender.sent == [(1, "You caught me off guard")]
+    assert len(v2_app.model.calls) == 2
+    assert v2_app.model.calls[1][2]["REPAIR_ERRORS"] == ["IDENTITY_BREAK"]
     assert (
         await scalar(
             v2_app,
@@ -130,11 +131,13 @@ async def test_v2_identity_admission_is_observed_and_not_rewritten(
 
 
 async def test_v2_formal_repair_is_bounded(v2_app: Application) -> None:
-    v2_app.model.responses.append({"parts": ["Hello :)"], "language": "en"})
+    v2_app.model.responses.append(
+        {"parts": ["Hello www.example.com"], "language": "en"}
+    )
     await v2_app.telegram.ingest([update(1, "Hello")])
     await v2_app.drain()
     assert len(v2_app.model.calls) == 2
-    assert v2_app.model.calls[1][2]["REPAIR_ERRORS"] == ["EMOJI_NOT_ALLOWED"]
+    assert v2_app.model.calls[1][2]["REPAIR_ERRORS"] == ["UNAPPROVED_URL"]
     assert v2_app.sender.sent == [(1, "You caught me off guard")]
 
 
@@ -292,7 +295,7 @@ async def test_handoff_uses_latest_confirmed_history(v2_app: Application) -> Non
     after = await v2_app.handoff_snapshot(current.scope)
     assert [message.role for message in after.messages] == ["user", "assistant"]
     assert after.preview_state["completed_replies"] == 1
-    assert after.policy_version == "marko-dialogue-v55"
+    assert after.policy_version == "marko-dialogue-v56"
     assert after.restricted_persona["location"]["residence"] == "Split, Croatia"
     receiver = InMemoryHandoffReceiver()
     await receiver.receive(after)
@@ -311,7 +314,7 @@ async def test_descriptive_action_metadata_does_not_discard_usable_reply(
     )
     await v2_app.telegram.ingest([update(1, "My children are eight and twelve")])
     await v2_app.drain()
-    assert v2_app.sender.sent == [(1, text)]
+    assert v2_app.sender.sent == [(1, text.replace("’", "'"))]
     assert len(v2_app.model.calls) == 1
 
 

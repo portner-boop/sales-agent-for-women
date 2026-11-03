@@ -66,16 +66,9 @@ def test_rendering_replacements_are_editable() -> None:
     assert ChatRendering().render("hello; still here.") == "hello; still here"
 
 
-def test_semicolon_emoticon_is_still_rejected() -> None:
-    from app.modules.dialogue.context import build_request
-    from app.modules.dialogue.schemas import DialogueDraft
-    from app.modules.dialogue.validation import validate_draft
-    from tests.test_v2_dialogue import message, session
-
-    request = build_request(session(), [], [message(1)])
-    assert "EMOJI_NOT_ALLOWED" in validate_draft(
-        DialogueDraft(parts=["hello ;)"], language="en"), request
-    )
+def test_wink_survives_semicolon_replacement() -> None:
+    renderer = ChatRendering(punctuation_replacements={";": ","})
+    assert renderer.render("hello ;) and you; me ;-)") == "hello ;) and you, me ;-)"
 
 
 @pytest.mark.parametrize(

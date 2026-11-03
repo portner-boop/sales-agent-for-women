@@ -108,15 +108,15 @@ async def test_first_bubble_meets_cap_and_later_bubble_types_separately(
     rows = await queued(app)
     assert not app.sender.sent
     first, second = rows
-    assert app.settings.runtime.first_deadline_seconds == 15
-    assert first["created_at"] <= received + 14
-    assert json.loads(first["proposal_json"])["first_reply_target_at"] == received + 15
+    assert app.settings.runtime.first_deadline_seconds == 10
+    assert first["created_at"] <= received + 9
+    assert json.loads(first["proposal_json"])["first_reply_target_at"] == received + 10
     assert json.loads(first["proposal_json"])["hard_deadline"] is False
     assert json.loads(second["proposal_json"])["hard_deadline"] is False
     assert second["deadline"] > first["deadline"]
     assert len(await app.delivery_repository.waiting_parts(app.clock.now())) == 1
     await send_next(app)
-    assert app.clock.now() <= received + 15
+    assert app.clock.now() <= received + 10
     assert [text for _, text in app.sender.sent] == ["a" * 140]
     assert await scalar(app, "SELECT COUNT(*) FROM followups") == 0
     second = (await queued(app))[0]
@@ -217,11 +217,8 @@ async def test_final_parts_finish_before_service_and_do_not_schedule_followup(
     assert (await conversation(app)).preview_reply_count == 20
     await send_next(app)
     await app.delivery.run_once()
-    assert [text for _, text in app.sender.sent][-3:] == [
-        "a" * 140,
-        "b" * 140,
-        "The trial conversation here has ended",
-    ]
+    assert [text for _, text in app.sender.sent][-2:] == ["a" * 140, "b" * 140]
+    assert "trial" not in app.sender.sent[-1][1]
     assert (
         await scalar(app, "SELECT COUNT(*) FROM followups WHERE status='pending'") == 0
     )

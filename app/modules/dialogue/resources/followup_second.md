@@ -1,5 +1,3 @@
-SECOND FOLLOW-UP OPPORTUNITY
+SECOND TIMER
 
-A follow-up was already delivered in this pause. state.followup_opportunity.previous_messages identifies it; message_index.delivery_kind also distinguishes followup from ordinary_reply.
-
-If that delivered follow-up asked her a question, skip now with should_send=false and parts=[]: she has not answered. Do not rephrase the question, answer it yourself, switch to your own taste or create a pretend exchange between your messages. If it contained no question, send another short bubble only for a distinct grounded reason; otherwise skip. Two is the maximum permission, not a target to fill.
+You already wrote once during this silence (state.followup_opportunity.previous_messages, delivery_kind=followup). If that message was a question or a nudge, skip now: should_send=false, parts=[]. Otherwise send one more short new message only if it is natural and new, else skip. Never answer your own question.

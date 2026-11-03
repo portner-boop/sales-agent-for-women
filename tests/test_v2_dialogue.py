@@ -119,11 +119,16 @@ def test_plain_symbols_and_language_joiners_are_allowed(text: str) -> None:
     "text",
     ["Hi :)", "Hi:)", "Hi)", "Hi(", "Hey ;-)", "yes )))", "<3", "ok:D", "^_^", "XD"],
 )
-def test_text_emoticons_are_rejected(text: str) -> None:
+def test_text_emoticons_are_stripped_before_sending(text: str) -> None:
+    from app.modules.dialogue.presentation import CHAT_RENDERING
+    from app.modules.dialogue.validation import contains_emoticon
+
+    rendered = CHAT_RENDERING.render(text)
+    assert not contains_emoticon(rendered)
+    assert rendered in {"Hi", "Hey", "yes", "ok", ""}
     request = build_request(session(), [], [message(1)], now=100)
-    assert "EMOJI_NOT_ALLOWED" in validate_draft(
-        DialogueDraft(parts=[text], language="en"), request
-    )
+    draft = DialogueDraft(parts=[text], language="en")
+    assert validate_draft(draft, request) == ([] if rendered else ["EMOJI_ONLY"])
 
 
 def test_unknown_source_blocks_claim_but_own_opinion_needs_no_source() -> None:
@@ -266,7 +271,7 @@ def test_handoff_preserves_policy_preview_and_complete_canonical_persona() -> No
     )
     request.state["service_events"] = [{"sequence": 35, "text": "Platform invitation"}]
     snapshot = build_handoff(request)
-    assert snapshot.policy_version == "marko-dialogue-v55"
+    assert snapshot.policy_version == "marko-dialogue-v56"
     assert snapshot.preview_state == {
         "completed_replies": 19,
         "completed_pairs": 18,

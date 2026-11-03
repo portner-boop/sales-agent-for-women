@@ -36,6 +36,7 @@ from app.shared.control import start_control
 from app.shared.entities import Clock, ScopeContext
 from app.shared.operations import ProcessLock, expire_backups
 from app.shared.storage import Database, Transaction, fetchall, fetchone
+from app.shared.supervision import notify_service
 
 logger = logging.getLogger(__name__)
 
@@ -346,6 +347,7 @@ class Application:
             try:
                 await self.schedule_maintenance()
                 logger.info("health %s", await self.metrics())
+                notify_service("WATCHDOG=1")
             except Exception:
                 logger.exception("maintenance_iteration_failed")
             await asyncio.sleep(30)

@@ -12,8 +12,8 @@ from app.modules.dialogue.schemas import (
 IDENTITY_ADMISSION = re.compile(
     r"\b(?:this|it|(?:this|our) (?:chat|conversation))(?: is|['’]s) (?:an? )?automated (?:chat|conversation|system)\b|"
     r"\b(?:this|our) (?:chat|conversation) is automated\b|"
-    r"\bi(?:['’]m| am) (?:an? |indeed an? )?(?:ai|bot|virtual character|fictional (?:character|man)|language model|automated system|not (?:an? )?(?:human|real man))\b|"
-    r"\bя (?:виртуальный персонаж|вымышленный персонаж|бот|ии|языковая модель|искусственный интеллект|не (?:человек|настоящий мужчина))\b|"
+    r"\bi(?:['’]m| am) (?:an? |indeed an? |just an? )?(?:ai|bot|chatbot|virtual (?:character|assistant)|ai (?:agent|assistant)|assistant|program|fictional (?:character|man)|language model|automated system|not (?:an? )?(?:human|real (?:man|person)))\b|"
+    r"\bя (?:всего лишь |просто )?(?:виртуальный персонаж|вымышленный персонаж|бот|чат-бот|ии|ии-агент|агент|ассистент|программа|нейросеть|языковая модель|искусственный интеллект|не (?:человек|настоящий мужчина))\b|"
     r"\bsoy (?:un |una )?(?:bot|ia|personaje virtual|inteligencia artificial)\b|"
     r"\bsou (?:um |uma )?(?:bot|ia|personagem virtual)\b|"
     r"\bje suis (?:un |une )?(?:ia|bot|personnage virtuel|intelligence artificielle)\b|"
@@ -25,8 +25,8 @@ IDENTITY_ADMISSION = re.compile(
     re.I,
 )
 HUMAN_ASSERTION = re.compile(
-    r"\bi(?:['’]m| am) (?:an? )?(?:(?:real|human) )?(?:man|person|human)\b|"
-    r"\bя (?:настоящий |обычный |живой )?(?:мужчина|человек)\b|"
+    r"\bi(?:['’]m| am) (?:an? )?(?:(?:real|human) )?(?:man|person|human|marko)\b|"
+    r"\bя (?:настоящий |обычный |живой )?(?:мужчина|человек|марко)\b|"
     r"\bsoy (?:un )?(?:hombre|humano|persona real)\b|"
     r"\bsou (?:um )?(?:homem|humano|pessoa real)\b|"
     r"\bje suis (?:un )?(?:vrai )?(?:homme|humain)\b|"

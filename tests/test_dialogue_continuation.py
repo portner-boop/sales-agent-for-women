@@ -29,7 +29,6 @@ def test_invalid_continuation_cannot_be_delivered(fields: dict[str, object]) -> 
 @pytest.mark.parametrize(
     ("text", "error"),
     [
-        ("what do you think 🙂", "EMOJI_NOT_ALLOWED"),
         ("visit https://example.com", "UNAPPROVED_URL"),
     ],
 )

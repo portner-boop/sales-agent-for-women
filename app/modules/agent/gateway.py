@@ -26,7 +26,9 @@ class GatewayModel:
             max_retries=0,
             reasoning_effort=settings.reasoning_effort,
             verbosity=settings.verbosity,
-            use_responses_api=False,
+            use_responses_api=True,
+            output_version="responses/v1",
+            store=False,
         )
 
     async def complete(
@@ -47,7 +49,7 @@ class GatewayModel:
         deadline_seconds: float,
     ) -> SchemaT:
         metadata, references = model_context(data)
-        metadata.setdefault("state", {})["model_identity"] = self.settings.model
+        metadata.get("state", {}).pop("model_identity", None)
         messages: list[AnyMessage] = [
             SystemMessage(
                 content=rules
@@ -70,6 +72,16 @@ class GatewayModel:
                 SystemMessage(
                     content="Regenerate for the original conversation. Fix only these formal errors: "
                     + json.dumps(data["REPAIR_ERRORS"])
+                    + (
+                        " REPEATED_REPLY: the draft repeats a message you already sent in this chat, say it from a new angle with new words."
+                        if "REPEATED_REPLY" in data["REPAIR_ERRORS"]
+                        else ""
+                    )
+                    + (
+                        " IDENTITY_BREAK: the draft says you are AI, a bot or not a real person. You are Marko, a living man, say so."
+                        if "IDENTITY_BREAK" in data["REPAIR_ERRORS"]
+                        else ""
+                    )
                 )
             )
         queue_started = asyncio.get_running_loop().time()
@@ -113,9 +125,10 @@ class GatewayModel:
                 raw = await self._invoke(runnable, messages)
                 self._observe(raw)
                 self._require_complete(raw)
-                if not isinstance(raw.content, str):
+                text = raw.text
+                if not text:
                     raise ModelOutputError("NONTEXT_OUTPUT")
-                parsed = schema.model_validate_json(raw.content)
+                parsed = schema.model_validate_json(text)
                 return schema.model_validate(
                     translate_references(parsed.model_dump(mode="json"), references)
                 )
@@ -134,23 +147,27 @@ class GatewayModel:
 
     @staticmethod
     def _require_complete(message: BaseModel) -> None:
-        if not isinstance(message, AIMessage) or message.response_metadata.get(
-            "finish_reason"
-        ) not in {"stop", "tool_calls"}:
-            reason = (
-                message.response_metadata.get("finish_reason")
-                if isinstance(message, AIMessage)
-                else None
-            )
-            raise ModelOutputError(
-                "TRUNCATED_OUTPUT" if reason == "length" else "INCOMPLETE_OUTPUT"
-            )
+        if not isinstance(message, AIMessage):
+            raise ModelOutputError("INCOMPLETE_OUTPUT")
+        if message.response_metadata.get("status") == "completed":
+            return
+        details = message.response_metadata.get("incomplete_details") or {}
+        raise ModelOutputError(
+            "TRUNCATED_OUTPUT"
+            if details.get("reason") == "max_output_tokens"
+            else "INCOMPLETE_OUTPUT"
+        )
 
     @staticmethod
     def _observe(message: AIMessage) -> None:
         metrics = current_llm_metrics.get()
         if metrics is not None and str(metrics.get("task", "")).startswith("dialogue"):
-            metrics["raw_response"] = message.content
+            metrics["raw_response"] = message.text
+            metrics["raw_response_blocks"] = message.content
+            metrics["response_status"] = message.response_metadata.get("status")
+            metrics["incomplete_details"] = message.response_metadata.get(
+                "incomplete_details"
+            )
         if metrics is not None and message.usage_metadata:
             metrics.update(
                 {

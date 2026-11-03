@@ -1,5 +1,6 @@
 import asyncio
 from collections import defaultdict, deque
+from hashlib import sha256
 from typing import Any
 
 from app.application import Application
@@ -49,10 +50,11 @@ class ScriptedModel:
                 if any("а" <= char.casefold() <= "я" for char in latest)
                 else data["language"]
             )
+            marker = sha256(str(number).encode()).hexdigest()[:16]
             text = (
-                f"Ты застала меня врасплох {number}"
+                f"Ты застала меня врасплох {number} {marker}"
                 if language == "ru"
-                else f"You caught me off guard {number}"
+                else f"You caught me off guard {number} {marker}"
             )
             result = {"parts": [text], "language": language}
         return schema.model_validate(result)

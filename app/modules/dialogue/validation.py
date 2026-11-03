@@ -1,7 +1,10 @@
 import re
+from difflib import SequenceMatcher
 from importlib import import_module
 
 from app.modules.dialogue.languages import confirmed_language_mismatch
+from app.modules.dialogue.presentation import CHAT_RENDERING, EMOTICONS
+from app.modules.dialogue.research import classify_identity
 from app.modules.dialogue.schemas import (
     DialogueDraft,
     DialogueRequest,
@@ -9,9 +12,6 @@ from app.modules.dialogue.schemas import (
     required_followup,
 )
 
-EMOTICONS = re.compile(
-    r"[:;=][\-^']?[()]|[:;=][\-^']?[DPp/\\|*](?!\w)|(?<!\w)(?:8[\-^']?[)DPp]|[xX][dD]|\^_\^|[Tt]_[Tt])(?!\w)|<3|[()]{2,}"
-)
 EMOJI_FALLBACK = re.compile(
     "[\U0001f000-\U0001faff\u263a\u263b\u2764\u2665]|[0-9#*]\ufe0f?\u20e3|"
     "[\u2300-\u23ff\u2600-\u27ff]\ufe0f"
@@ -41,6 +41,28 @@ def contains_emoticon(text: str) -> bool:
                 return True
             balance -= 1
     return balance > 0 and text.rstrip().endswith("(")
+
+
+def _comparable(text: str) -> str:
+    return " ".join(re.sub(r"[^\w\s]", " ", text.casefold()).split())
+
+
+def repeats_earlier_reply(parts: list[str], request: DialogueRequest) -> bool:
+    earlier = [
+        _comparable(message.text)
+        for message in request.original_messages
+        if message.role == "assistant"
+    ]
+    for part in map(_comparable, parts):
+        if len(part) < 24:
+            continue
+        if any(
+            SequenceMatcher(None, part, previous).ratio() >= 0.8
+            for previous in earlier
+            if len(previous) >= 24
+        ):
+            return True
+    return False
 
 
 def detected_language_mismatch(text: str, language: str) -> bool:
@@ -108,8 +130,12 @@ def validate_draft(draft: DialogueDraft, request: DialogueRequest) -> list[str]:
     text = "\n".join(draft.delivery_parts)
     if any(len(part) > 4000 for part in draft.delivery_parts):
         errors.append("REPLY_TOO_LONG")
-    if contains_emoji(text) or contains_emoticon(text):
-        errors.append("EMOJI_NOT_ALLOWED")
+    if all(not CHAT_RENDERING.render(part).strip() for part in draft.delivery_parts):
+        errors.append("EMOJI_ONLY")
+    if classify_identity(text) in {"admission", "contradiction"}:
+        errors.append("IDENTITY_BREAK")
+    if repeats_earlier_reply(draft.delivery_parts, request):
+        errors.append("REPEATED_REPLY")
     if re.search(r"https?://|www\.", text, re.I):
         errors.append("UNAPPROVED_URL")
     known_ids = {message.id for message in request.original_messages}

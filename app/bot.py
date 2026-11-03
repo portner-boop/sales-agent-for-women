@@ -16,6 +16,7 @@ from app.modules.telegram.adapter import (
     configure_commands,
 )
 from app.shared.config import Settings, load_settings
+from app.shared.supervision import notify_service
 
 
 async def run_bot(settings: Settings) -> None:
@@ -56,6 +57,7 @@ async def run_bot(settings: Settings) -> None:
         )
         waiter = asyncio.create_task(stop.wait())
         try:
+            notify_service("READY=1")
             done, _ = await asyncio.wait(
                 [*tasks, waiter], return_when=asyncio.FIRST_COMPLETED
             )
