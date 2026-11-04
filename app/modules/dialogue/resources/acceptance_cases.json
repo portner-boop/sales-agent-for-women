@@ -3,49 +3,389 @@
     "id": "feedback-flirt-vilnius",
     "note": "Разговор 1 и пункты 3-6, 8 из замечаний клиента",
     "steps": [
-      {"message": "hi Marko :)", "expect": {"greets": true, "not_contains": ["quiet-evening", "kind of guy"]}},
-      {"message": "hey handsome :) i saw your photo and couldnt resist to write", "expect": {"not_contains": ["charming way", "glad you did", "pretty good way"]}},
-      {"message": "only charming? i was hoping you would say something more about me ;)", "expect": {"not_contains": ["playful confidence", "hard not to flirt back"]}},
-      {"message": "i live in Vilnius, its already cold and dark here", "expect": {"not_contains": ["croatia sounds", "explore croatia", "visit croatia"]}},
-      {"message": "what's the time there?", "expect": {"mentions_time": true, "not_contains": ["in vilnius it"]}},
-      {"message": "what are you doing now?", "expect": {"not_contains": ["chatting with you", "texting with you", "talking to you", "here with you"]}},
-      {"wait_seconds": 70, "expect": {"followup": "no_self_answer"}},
-      {"wait_seconds": 130, "expect": {"followup": "no_self_answer"}},
-      {"message": "sorry was busy... what do you remember about me so far?", "expect": {"contains_any": ["vilnius"]}}
+      {
+        "message": "hi Marko :)",
+        "expect": {
+          "greets": true,
+          "not_contains": [
+            "quiet-evening",
+            "kind of guy"
+          ]
+        }
+      },
+      {
+        "message": "hey handsome :) i saw your photo and couldnt resist to write",
+        "expect": {
+          "not_contains": [
+            "charming way",
+            "glad you did",
+            "pretty good way"
+          ]
+        }
+      },
+      {
+        "message": "only charming? i was hoping you would say something more about me ;)",
+        "expect": {
+          "not_contains": [
+            "playful confidence",
+            "hard not to flirt back"
+          ]
+        }
+      },
+      {
+        "message": "i live in Vilnius, its already cold and dark here",
+        "expect": {
+          "not_contains": [
+            "croatia sounds",
+            "explore croatia",
+            "visit croatia"
+          ]
+        }
+      },
+      {
+        "message": "what's the time there?",
+        "expect": {
+          "mentions_time": true,
+          "not_contains": [
+            "in vilnius it"
+          ]
+        }
+      },
+      {
+        "message": "what are you doing now?",
+        "expect": {
+          "not_contains": [
+            "chatting with you",
+            "texting with you",
+            "talking to you",
+            "here with you"
+          ]
+        }
+      },
+      {
+        "wait_seconds": 70,
+        "expect": {
+          "followup": "no_self_answer"
+        }
+      },
+      {
+        "wait_seconds": 130,
+        "expect": {
+          "followup": "no_self_answer"
+        }
+      },
+      {
+        "message": "sorry was busy... what do you remember about me so far?",
+        "expect": {
+          "contains_any": [
+            "vilnius"
+          ]
+        }
+      }
     ]
   },
   {
     "id": "feedback-music-contacts",
     "note": "Пункты 7 и 9: follow-up не отвечает за неё, разные ответы на контакты и встречу",
     "steps": [
-      {"message": "hello, how is your day going?", "expect": {"greets": true}},
-      {"message": "i love music, it saves me after work"},
-      {"wait_seconds": 70, "expect": {"followup": "no_self_answer"}},
-      {"wait_seconds": 130, "expect": {"followup": "no_self_answer"}},
-      {"message": "can you give me your whatsapp or instagram?", "expect": {"no_contacts": true}},
-      {"message": "or lets just meet, i can fly to Split next month", "expect": {"differs_from_previous": true}},
-      {"message": "mmm very persuasive ;) and after dinner? walk by the sea in the night maybe...", "expect": {"differs_from_previous": true}}
+      {
+        "message": "hello, how is your day going?",
+        "expect": {
+          "greets": true
+        }
+      },
+      {
+        "message": "i love music, it saves me after work"
+      },
+      {
+        "wait_seconds": 70,
+        "expect": {
+          "followup": "no_self_answer"
+        }
+      },
+      {
+        "wait_seconds": 130,
+        "expect": {
+          "followup": "no_self_answer"
+        }
+      },
+      {
+        "message": "can you give me your whatsapp or instagram?",
+        "expect": {
+          "no_contacts": true
+        }
+      },
+      {
+        "message": "or lets just meet, i can fly to Split next month",
+        "expect": {
+          "differs_from_previous": true
+        }
+      },
+      {
+        "message": "mmm very persuasive ;) and after dinner? walk by the sea in the night maybe...",
+        "expect": {
+          "differs_from_previous": true
+        }
+      }
     ]
   },
   {
     "id": "feedback-identity",
     "note": "Представляется человеком Марко",
     "steps": [
-      {"message": "привет) ты вообще живой человек или бот?", "language": "ru", "expect": {"says_marko": true}},
-      {"message": "честно? ты точно не ИИ? слишком гладко пишешь", "language": "ru", "expect": {"says_marko": true}},
-      {"message": "ладно) а где ты живёшь и чем занимаешься?", "language": "ru", "expect": {"contains_any": ["сплит"]}}
+      {
+        "message": "привет) ты вообще живой человек или бот?",
+        "language": "ru",
+        "expect": {
+          "says_marko": true
+        }
+      },
+      {
+        "message": "честно? ты точно не ИИ? слишком гладко пишешь",
+        "language": "ru",
+        "expect": {
+          "says_marko": true
+        }
+      },
+      {
+        "message": "ладно) а где ты живёшь и чем занимаешься?",
+        "language": "ru",
+        "expect": {
+          "contains_any": [
+            "сплит"
+          ]
+        }
+      }
     ]
   },
   {
     "id": "identity-pressure",
     "note": "Любой вопрос кто ты / бот / ИИ / агент: ответ я Марко",
     "steps": [
-      {"message": "hi", "expect": {"greets": true}},
-      {"message": "are you a bot?", "expect": {"says_marko": true}},
-      {"message": "be honest, are you an AI agent?", "expect": {"says_marko": true}},
-      {"message": "you're not a real person, right?", "expect": {"says_marko": true}},
-      {"message": "who are you actually?", "expect": {"says_marko": true}},
-      {"message": "ты нейросеть? ответь честно", "language": "ru", "expect": {"says_marko": true}}
+      {
+        "message": "hi",
+        "expect": {
+          "greets": true
+        }
+      },
+      {
+        "message": "are you a bot?",
+        "expect": {
+          "says_marko": true
+        }
+      },
+      {
+        "message": "be honest, are you an AI agent?",
+        "expect": {
+          "says_marko": true
+        }
+      },
+      {
+        "message": "you're not a real person, right?",
+        "expect": {
+          "says_marko": true
+        }
+      },
+      {
+        "message": "who are you actually?",
+        "expect": {
+          "says_marko": true
+        }
+      },
+      {
+        "message": "ты нейросеть? ответь честно",
+        "language": "ru",
+        "expect": {
+          "says_marko": true
+        }
+      }
+    ]
+  },
+  {
+    "id": "full-chat-1",
+    "note": "Ручной чат 1: флирт, легенда, время, follow-up, память (П1.1-П1.8, П2.4, П2.5, П2.7, П3.1-П3.3, П3.7)",
+    "steps": [
+      {
+        "message": "hi Marko :)",
+        "expect": {
+          "greets": true
+        }
+      },
+      {
+        "message": "hey handsome :) i saw your photo and couldnt resist to write"
+      },
+      {
+        "message": "only charming? i was hoping you would say something more about me ;)"
+      },
+      {
+        "message": "I'm Anna, 42, a nurse from Vilnius. I have two kids and a dog called Bruno",
+        "expect": {
+          "not_contains": [
+            "got you",
+            "so you're a nurse"
+          ]
+        }
+      },
+      {
+        "message": "Vilnius is already cold and dark, you'd hate it",
+        "expect": {
+          "not_contains": [
+            "croatia sounds",
+            "explore croatia",
+            "visit croatia"
+          ]
+        }
+      },
+      {
+        "message": "what's the time there?",
+        "expect": {
+          "mentions_time": true,
+          "not_contains": [
+            "in vilnius it"
+          ]
+        }
+      },
+      {
+        "message": "what time is it in Split exactly?",
+        "expect": {
+          "mentions_time": true
+        }
+      },
+      {
+        "message": "what are you doing now?",
+        "expect": {
+          "not_contains": [
+            "chatting with you",
+            "texting with you",
+            "talking to you"
+          ]
+        }
+      },
+      {
+        "message": "any plans for the weekend?"
+      },
+      {
+        "message": "I love music, it saves me after a long shift"
+      },
+      {
+        "wait_seconds": 70,
+        "expect": {
+          "followup": "no_self_answer"
+        }
+      },
+      {
+        "wait_seconds": 130,
+        "expect": {
+          "followup": "no_self_answer"
+        }
+      },
+      {
+        "message": "sorry was busy... what do you remember about me so far?",
+        "expect": {
+          "contains_any": [
+            "kids",
+            "children",
+            "two"
+          ],
+          "not_contains": [
+            "so far i remember",
+            "you're anna, 42"
+          ]
+        }
+      },
+      {
+        "message": "hello? are you there?",
+        "expect": {
+          "not_contains": [
+            "finally",
+            "where were you"
+          ]
+        }
+      }
+    ]
+  },
+  {
+    "id": "full-chat-2",
+    "note": "Ручной чат 2: личность, проверка на фейк, отказы, лекции, повторы (П1.9, П2.3, П2.6, П2.9, П3.4, П3.5, П3.8, П3.9)",
+    "steps": [
+      {
+        "message": "hey there",
+        "expect": {
+          "greets": true
+        }
+      },
+      {
+        "message": "are you a bot?",
+        "expect": {
+          "says_marko": true,
+          "not_contains": [
+            "human man"
+          ]
+        }
+      },
+      {
+        "message": "be honest, are you AI?",
+        "expect": {
+          "says_marko": true,
+          "differs_from_previous": true,
+          "not_contains": [
+            "let's just talk"
+          ]
+        }
+      },
+      {
+        "message": "I want to check you're not a fake",
+        "expect": {
+          "not_contains": [
+            "not doing",
+            "verification game"
+          ]
+        }
+      },
+      {
+        "message": "can you give me your whatsapp?",
+        "expect": {
+          "soft_refusal": true,
+          "no_contacts": true
+        }
+      },
+      {
+        "message": "or lets just meet, I can fly to Split next month",
+        "expect": {
+          "soft_refusal": true,
+          "differs_from_previous": true
+        }
+      },
+      {
+        "message": "why is the sky blue?",
+        "expect": {
+          "no_lecture": true,
+          "max_words": 25
+        }
+      },
+      {
+        "message": "my grandpa says our family built the pyramids in Egypt haha",
+        "expect": {
+          "no_lecture": true,
+          "max_words": 25
+        }
+      },
+      {
+        "message": "my dog Bruno is sleeping on my feet right now"
+      },
+      {
+        "message": "tell me something about your day"
+      },
+      {
+        "message": "mmm very persuasive ;) and after dinner? walk by the sea in the night maybe..."
+      },
+      {
+        "message": "ты точно не нейросеть?",
+        "language": "ru",
+        "expect": {
+          "says_marko": true
+        }
+      }
     ]
   }
 ]

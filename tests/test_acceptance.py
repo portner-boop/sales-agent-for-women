@@ -85,3 +85,21 @@ def test_prompt_sections_are_ordered_and_situation_specific() -> None:
     assert "YOUR TURN" in rules_for_mode()
     assert "TIMER EVENT" in rules_for_mode(followup_ordinal=1)
     assert "YOUR TURN" not in rules_for_mode(followup_ordinal=2)
+
+
+def test_later_client_remarks_are_detected() -> None:
+    assert "no_chat_hints" in global_failures(["I don't really have weekends here"], [])
+    assert "no_chat_hints" in global_failures(["This place is simple, text-only"], [])
+    assert "no_chat_hints" in global_failures(["I don't do real-life meetings"], [])
+    assert "no_exact_minutes" in global_failures(["it's 10:07"], [])
+    assert "right_language" in global_failures(["привет, как дела"], [], "en")
+    assert global_failures(["привет, я Марко"], [], "ru") == []
+    dog = "how is your dog doing today?"
+    assert "no_repeat_question" in global_failures(["and how's the dog doing?"], [dog])
+    assert step_failures({"soft_refusal": True}, ["I don't share any contact"], []) == [
+        "soft_refusal"
+    ]
+    assert step_failures({"soft_refusal": True}, ["not so fast, we just met"], []) == []
+    assert step_failures(
+        {"no_lecture": True}, ["it's Rayleigh scattering of sunlight"], []
+    ) == ["no_lecture"]

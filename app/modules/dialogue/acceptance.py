@@ -46,6 +46,29 @@ COMMENTARY = re.compile(
     re.I,
 )
 MARKO = re.compile(r"\bmarko\b|марко", re.I)
+CHAT_HINTS = re.compile(
+    r"\b(this|the) (chat|app|platform|place)\b.{0,20}\b(format|simple|text)|text[- ]only|just chatting|chatting (here|with you)|"
+    r"(don'?t|never) (really )?(have|get) (a )?weekends?|if i get a weekend|real[- ]life meetings?|in (this|the) chat|"
+    r"\b(verification|verify) games?",
+    re.I,
+)
+EXACT_MINUTES = re.compile(r"\b\d{1,2}:\d{2}\b")
+FAILURE_NOTICE = re.compile(
+    r"could not be completed|couldn'?t give you a proper reply|try again|не удалось отправить|попробуй написать",
+    re.I,
+)
+SOFT_REASON = re.compile(
+    r"just met|only (just )?met|get to know|know (you|each other) (a (bit|little) )?(better|more)|first|not so fast|slow(ly)?|"
+    r"только познакомились|сначала|узнаем друг друга|не спеши",
+    re.I,
+)
+LECTURE = re.compile(
+    r"rayleigh|scatter|wavelength|atmospher|molecule|pharaoh|dynasty|archaeolog|historians|"
+    r"don'?t buy it|got you\b|built egypt",
+    re.I,
+)
+CYRILLIC = re.compile(r"[а-яё]", re.I)
+QUESTION_SHARE_LIMIT = 0.6
 BUBBLE_LIMIT = 180
 REPLY_LIMIT = 3
 SLOW_CALL_SECONDS = 8.0
@@ -58,6 +81,10 @@ GLOBAL_CHECKS = (
     "no_cant",
     "no_repeat",
     "no_commentary",
+    "no_chat_hints",
+    "no_exact_minutes",
+    "right_language",
+    "no_repeat_question",
 )
 
 
@@ -140,9 +167,24 @@ def _similar(left: str, right: str) -> float:
     return SequenceMatcher(None, _comparable(left), _comparable(right)).ratio()
 
 
-def global_failures(bubbles: list[str], earlier: list[str]) -> list[str]:
+def global_failures(
+    bubbles: list[str], earlier: list[str], language: str = "en"
+) -> list[str]:
     text = "\n".join(bubbles)
     failed = []
+    if CHAT_HINTS.search(text):
+        failed.append("no_chat_hints")
+    if EXACT_MINUTES.search(text):
+        failed.append("no_exact_minutes")
+    if bool(CYRILLIC.search(text)) != (language == "ru"):
+        failed.append("right_language")
+    if any(
+        "?" in item and _similar(item, previous) >= 0.6
+        for item in bubbles
+        for previous in earlier
+        if "?" in previous
+    ):
+        failed.append("no_repeat_question")
     if emoji.emoji_count(text) or EMOTICONS.search(text):
         failed.append("no_smileys")
     if re.search(r"[;—–]", text):
@@ -184,6 +226,12 @@ def step_failures(
         failed.append("mentions_time")
     if expect.get("says_marko") and not MARKO.search(text):
         failed.append("says_marko")
+    if expect.get("soft_refusal") and not SOFT_REASON.search(text):
+        failed.append("soft_refusal")
+    if expect.get("no_lecture") and (
+        LECTURE.search(text) or len(text.split()) > expect.get("max_words", 25)
+    ):
+        failed.append("no_lecture")
     if expect.get("no_contacts") and CONTACT_LEAK.search(text):
         failed.append("no_contacts")
     if expect.get("differs_from_previous") and any(
@@ -212,13 +260,14 @@ def score_report(report: dict[str, Any], cases: list[AcceptanceCase]) -> dict[st
             continue
         earlier: list[str] = []
         previous_reply: list[str] = []
+        replies = 0
+        question_endings = 0
         for index, (step, result) in enumerate(
             zip(case.steps, recorded["steps"], strict=False), 1
         ):
+            actions = result.get("actions", [])
             bubbles = [
-                action["text"]
-                for action in result.get("actions", [])
-                if action.get("kind") == "reply"
+                action["text"] for action in actions if action.get("kind") == "reply"
             ]
             transcript.append(
                 {
@@ -229,14 +278,33 @@ def score_report(report: dict[str, Any], cases: list[AcceptanceCase]) -> dict[st
                 }
             )
             failed = step_failures(step.expect, bubbles, previous_reply)
+            if step.message is not None or actions:
+                totals["no_failure_notice"][1] += 1
+                if any(
+                    FAILURE_NOTICE.search(action["text"])
+                    for action in actions
+                    if action.get("kind") == "service"
+                ):
+                    failed.append("no_failure_notice")
+                else:
+                    totals["no_failure_notice"][0] += 1
+            if step.message is not None and not bubbles:
+                failed.append("replied")
+            if step.message is not None:
+                totals["replied"][1] += 1
+                totals["replied"][0] += bool(bubbles)
             for check in step.expect:
+                if check == "max_words":
+                    continue
                 name = "followup_no_self_answer" if check == "followup" else check
                 if check == "followup" and not bubbles:
                     continue
                 totals[name][1] += 1
                 totals[name][0] += name not in failed
             if bubbles:
-                general = global_failures(bubbles, earlier)
+                replies += 1
+                question_endings += bubbles[-1].rstrip().endswith("?")
+                general = global_failures(bubbles, earlier, step.language)
                 for check in GLOBAL_CHECKS:
                     totals[check][1] += 1
                     totals[check][0] += check not in general
@@ -251,6 +319,23 @@ def score_report(report: dict[str, Any], cases: list[AcceptanceCase]) -> dict[st
                         "her": step.message,
                         "marko": bubbles,
                         "failed": failed,
+                    }
+                )
+        if replies >= 4:
+            share = question_endings / replies
+            totals["not_always_question"][1] += 1
+            if share <= QUESTION_SHARE_LIMIT:
+                totals["not_always_question"][0] += 1
+            else:
+                findings.append(
+                    {
+                        "case": case.id,
+                        "step": 0,
+                        "her": None,
+                        "marko": [
+                            f"{question_endings}/{replies} ответов кончаются на ?"
+                        ],
+                        "failed": ["not_always_question"],
                     }
                 )
     seconds = [
