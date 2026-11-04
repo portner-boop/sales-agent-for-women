@@ -147,7 +147,7 @@ async def test_default_offline_runner_does_not_load_credentials_or_gateway(
     assert report.status == "complete"
     assert report.backend == "offline_smoke"
     assert report.quality_validated is False
-    assert report.policy_version == "marko-dialogue-v60"
+    assert report.policy_version == "marko-dialogue-v61"
     assert len(report.schema_sha256) == 64
     assert report.calls == report.delivered_turns == 2
     assert report.input_tokens is None

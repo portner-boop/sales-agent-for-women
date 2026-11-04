@@ -57,7 +57,8 @@ TYPOS = random.Random()
 SHAPES = random.Random()
 # How many chat bubbles a reply has: one line most often, sometimes a burst.
 BUBBLE_WEIGHTS = {1: 0.45, 2: 0.4, 3: 0.15}
-QUESTION_PROBABILITY = 0.4
+QUESTION_PROBABILITY = 0.3
+FIRST_QUESTION_PROBABILITY = 0.6
 
 
 def reply_shape(first: bool) -> dict[str, Any]:
@@ -66,7 +67,8 @@ def reply_shape(first: bool) -> dict[str, Any]:
     )[0]
     return {
         "messages": messages,
-        "end_with_question": first or SHAPES.random() < QUESTION_PROBABILITY,
+        "end_with_question": SHAPES.random()
+        < (FIRST_QUESTION_PROBABILITY if first else QUESTION_PROBABILITY),
     }
 
 

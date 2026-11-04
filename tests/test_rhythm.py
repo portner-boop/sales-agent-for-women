@@ -28,11 +28,12 @@ async def open_app(tmp_path: Path, **runtime: Any) -> Application:
     )
 
 
-def test_reply_shape_varies_and_first_reply_may_ask() -> None:
+def test_reply_shape_varies_and_first_reply_is_not_forced_to_ask() -> None:
     shapes = [reply_shape(first=False) for _ in range(300)]
     assert {shape["messages"] for shape in shapes} == {1, 2, 3}
     assert {shape["end_with_question"] for shape in shapes} == {True, False}
-    assert all(reply_shape(first=True)["end_with_question"] for _ in range(20))
+    first = [reply_shape(first=True)["end_with_question"] for _ in range(200)]
+    assert True in first and False in first
 
 
 async def test_ordinary_turn_carries_reply_shape_but_timer_does_not(
