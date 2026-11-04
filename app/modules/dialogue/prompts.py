@@ -2,7 +2,7 @@ from pathlib import Path
 
 from app.modules.dialogue.schemas import DialogueMode
 
-POLICY_VERSION = "marko-dialogue-v58"
+POLICY_VERSION = "marko-dialogue-v59"
 
 RESOURCE_DIRECTORY = Path(__file__).with_name("resources")
 PROMPT_DIRECTORY = RESOURCE_DIRECTORY / "prompt"

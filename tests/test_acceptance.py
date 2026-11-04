@@ -163,3 +163,25 @@ def test_duplicate_bubbles_inside_one_reply_are_repaired() -> None:
         language="en",
     )
     assert validate_draft(draft, request) == ["REPEATED_REPLY"]
+
+
+def test_short_messages_choose_her_language_not_the_telegram_ui() -> None:
+    from app.modules.dialogue.languages import message_language
+
+    assert message_language("hi Marko :)", "ru") == "en"
+    assert message_language("привет)", "en") == "ru"
+    assert message_language("ok", "de") == "de"
+    assert message_language("labas, kaip sekasi?", "en") == "lt"
+
+
+def test_reply_in_another_script_is_a_soft_repair() -> None:
+    from app.modules.dialogue.context import build_request
+    from app.modules.dialogue.schemas import DialogueDraft
+    from app.modules.dialogue.validation import validate_draft
+    from tests.test_v2_dialogue import message, session
+
+    request = build_request(session(), [], [message(1, text="hi Marko :)")])
+    russian = DialogueDraft(parts=["привет, красавица"], language="ru")
+    assert validate_draft(russian, request) == ["LANGUAGE_MISMATCH"]
+    english = DialogueDraft(parts=["hey you"], language="en")
+    assert validate_draft(english, request) == []

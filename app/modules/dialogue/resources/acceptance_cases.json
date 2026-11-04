@@ -387,5 +387,120 @@
         }
       }
     ]
+  },
+  {
+    "id": "language-telegram-ui",
+    "note": "Русский интерфейс Telegram, а пишет по-английски: отвечать по-английски",
+    "steps": [
+      {
+        "message": "hi Marko :)",
+        "ui_language": "ru",
+        "expect": {
+          "greets": true
+        }
+      },
+      {
+        "message": "how are you?",
+        "ui_language": "ru"
+      },
+      {
+        "message": "ok",
+        "ui_language": "ru"
+      },
+      {
+        "wait_seconds": 70,
+        "ui_language": "ru",
+        "expect": {
+          "followup": "no_self_answer"
+        }
+      }
+    ]
+  },
+  {
+    "id": "language-switching",
+    "note": "Мультиязычность: отвечает на языке каждого её сообщения",
+    "steps": [
+      {
+        "message": "hi there",
+        "expect": {
+          "greets": true
+        }
+      },
+      {
+        "message": "как дела?",
+        "language": "ru",
+        "ui_language": "en"
+      },
+      {
+        "message": "hallo, wie geht's?",
+        "language": "de",
+        "expect": {
+          "contains_any": [
+            "gut",
+            "danke",
+            "ich",
+            "bin",
+            "hier",
+            "und",
+            "dir"
+          ]
+        }
+      },
+      {
+        "message": "hola guapo",
+        "language": "es",
+        "expect": {
+          "contains_any": [
+            "hola",
+            "guapa",
+            "qué",
+            "que",
+            "aquí",
+            "estoy",
+            "bien",
+            "tú"
+          ]
+        }
+      },
+      {
+        "message": "labas, kaip sekasi?",
+        "language": "lt",
+        "expect": {
+          "contains_any": [
+            "labas",
+            "gerai",
+            "ačiū",
+            "tau",
+            "kaip",
+            "čia",
+            "sekasi"
+          ]
+        }
+      },
+      {
+        "message": "привіт, як справи?",
+        "language": "uk",
+        "ui_language": "en",
+        "expect": {
+          "contains_any": [
+            "і",
+            "ї",
+            "є",
+            "добре",
+            "привіт"
+          ]
+        }
+      },
+      {
+        "message": "ok back to english, what are you doing?",
+        "expect": {
+          "not_contains": [
+            "что",
+            "was ",
+            "qué"
+          ]
+        }
+      }
+    ]
   }
 ]

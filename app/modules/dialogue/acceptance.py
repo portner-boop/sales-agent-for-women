@@ -17,6 +17,7 @@ from typing import Any
 import emoji
 from pydantic import BaseModel, ConfigDict, Field
 
+from app.modules.dialogue.languages import language_script, script_of
 from app.modules.dialogue.presentation import EMOTICONS
 from app.modules.dialogue.replay import ReplayCase, ReplayStep, run_replay
 from app.modules.dialogue.research import classify_identity
@@ -67,7 +68,6 @@ LECTURE = re.compile(
     r"don'?t buy it|got you\b|built egypt",
     re.I,
 )
-CYRILLIC = re.compile(r"[а-яё]", re.I)
 QUESTION_SHARE_LIMIT = 0.6
 BUBBLE_LIMIT = 180
 REPLY_LIMIT = 3
@@ -133,6 +133,7 @@ class AcceptanceStep(BaseModel):
     message: str | None = None
     wait_seconds: float | None = None
     language: str = "en"
+    ui_language: str | None = None
     expect: dict[str, Any] = Field(default_factory=dict)
 
 
@@ -146,7 +147,11 @@ class AcceptanceCase(BaseModel):
         return ReplayCase(
             id=self.id,
             steps=[
-                ReplayStep(**step.model_dump(exclude={"expect"}, exclude_none=True))
+                ReplayStep(
+                    message=step.message,
+                    wait_seconds=step.wait_seconds,
+                    language=step.ui_language or step.language,
+                )
                 for step in self.steps
             ],
         )
@@ -176,7 +181,8 @@ def global_failures(
         failed.append("no_chat_hints")
     if EXACT_MINUTES.search(text):
         failed.append("no_exact_minutes")
-    if bool(CYRILLIC.search(text)) != (language == "ru"):
+    script = script_of(text)
+    if script is not None and script != language_script(language):
         failed.append("right_language")
     if any(
         "?" in item and _similar(item, previous) >= 0.6

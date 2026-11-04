@@ -15,6 +15,27 @@ from app.modules.dialogue.runner import (
 )
 from app.modules.dialogue.schemas import DialogueDraft
 
+TEA = {
+    "cyrillic": ("Я бы выбрал чай", "ru"),
+    "arabic": ("أفضل الشاي", "ar"),
+    "cjk": ("我更喜欢茶", "zh"),
+}
+
+
+def default_reply(data: dict[str, Any]) -> DialogueDraft:
+    from app.modules.dialogue.languages import script_of
+
+    latest = next(
+        (
+            item["text"]
+            for item in reversed(data.get("original_messages", []))
+            if item["role"] == "user"
+        ),
+        "",
+    )
+    text, language = TEA.get(script_of(latest) or "latin", ("I prefer tea", "en"))
+    return DialogueDraft(parts=[text], language=language)
+
 
 class RecordingModel:
     def __init__(self, replies: list[DialogueDraft | Exception] | None = None) -> None:
@@ -30,11 +51,7 @@ class RecordingModel:
         deadline_seconds: float,
     ) -> SchemaT:
         self.requests.append(data)
-        result = (
-            self.replies.popleft()
-            if self.replies
-            else DialogueDraft(parts=["I prefer tea"], language="en")
-        )
+        result = self.replies.popleft() if self.replies else default_reply(data)
         metrics = current_llm_metrics.get()
         assert metrics is not None
         metrics.update(
@@ -130,7 +147,7 @@ async def test_default_offline_runner_does_not_load_credentials_or_gateway(
     assert report.status == "complete"
     assert report.backend == "offline_smoke"
     assert report.quality_validated is False
-    assert report.policy_version == "marko-dialogue-v58"
+    assert report.policy_version == "marko-dialogue-v59"
     assert len(report.schema_sha256) == 64
     assert report.calls == report.delivered_turns == 2
     assert report.input_tokens is None

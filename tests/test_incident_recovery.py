@@ -988,11 +988,12 @@ async def test_contact_permission_is_independent_of_a_quiet_reply(
     proactive_app: Application, text: str, paused: bool
 ) -> None:
     app = proactive_app
+    russian = any("а" <= character <= "я" for character in text)
     app.model.responses["dialogue"].append(
         {
             "conversation_action": "yield",
-            "parts": ["we can slow down a little"],
-            "language": "en",
+            "parts": ["давай помедленнее" if russian else "we can slow down a little"],
+            "language": "ru" if russian else "en",
             "pause_requested": paused,
         }
     )

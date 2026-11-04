@@ -2,7 +2,10 @@ import re
 from difflib import SequenceMatcher
 from importlib import import_module
 
-from app.modules.dialogue.languages import confirmed_language_mismatch
+from app.modules.dialogue.languages import (
+    confirmed_language_mismatch,
+    script_of,
+)
 from app.modules.dialogue.presentation import CHAT_RENDERING, EMOTICONS
 from app.modules.dialogue.research import classify_identity
 from app.modules.dialogue.schemas import (
@@ -85,6 +88,18 @@ def repeats_earlier_question(parts: list[str], request: DialogueRequest) -> bool
         if "?" in part
         for previous in earlier
     )
+
+
+def her_language_mismatch(text: str, request: DialogueRequest) -> bool:
+    pending = [
+        message
+        for message in request.original_messages
+        if message.id in request.pending_ids and message.role == "user"
+    ]
+    if not pending:
+        return False
+    her_script, reply_script = script_of(pending[-1].text), script_of(text)
+    return bool(her_script and reply_script and her_script != reply_script)
 
 
 def detected_language_mismatch(text: str, language: str) -> bool:
@@ -180,4 +195,6 @@ def validate_draft(draft: DialogueDraft, request: DialogueRequest) -> list[str]:
         errors.append("FOLLOWUP_TRANSITION_NOT_ALLOWED")
     if detected_language_mismatch(text, draft.language):
         errors.append("WRONG_LANGUAGE")
+    elif her_language_mismatch(text, request):
+        errors.append("LANGUAGE_MISMATCH")
     return errors

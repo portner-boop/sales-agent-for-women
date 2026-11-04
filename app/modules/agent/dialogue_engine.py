@@ -52,7 +52,7 @@ from app.shared.entities import (
 )
 from app.shared.storage import Transaction, fetchone
 
-SOFT_ERRORS = {"REPEATED_REPLY", "REPEATED_QUESTION"}
+SOFT_ERRORS = {"REPEATED_REPLY", "REPEATED_QUESTION", "LANGUAGE_MISMATCH"}
 TYPOS = random.Random()
 
 

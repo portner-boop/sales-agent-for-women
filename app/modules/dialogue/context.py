@@ -5,7 +5,7 @@ from typing import Any, Literal, cast
 
 from app.modules.conversations.entities import Conversation, Message
 from app.modules.dialogue.episodes import calendar_context
-from app.modules.dialogue.languages import confident_language
+from app.modules.dialogue.languages import likely_language, message_language
 from app.modules.dialogue.persona import DISCLOSURES, persona_projection
 from app.modules.dialogue.prompts import POLICY_VERSION
 from app.modules.dialogue.schemas import (
@@ -81,7 +81,9 @@ def build_request(
     timestamp = now if now is not None else datetime.now(UTC).timestamp()
     persona = persona_projection((), timestamp)
     incoming_language = (
-        confident_language(pending[-1].text) if pending and not followup else None
+        message_language(pending[-1].text, conversation.language)
+        if pending and not followup
+        else None
     )
     return DialogueRequest(
         scope_id=conversation.id,
@@ -119,7 +121,13 @@ def build_request(
             "control": conversation.control_state,
             "previous_language": conversation.language,
             "language_source": (
-                "incoming_text" if incoming_language else "session_fallback"
+                "incoming_text"
+                if pending and not followup and likely_language(pending[-1].text)
+                else (
+                    "script"
+                    if incoming_language not in {None, conversation.language}
+                    else "session_fallback"
+                )
             ),
             "policy_version": POLICY_VERSION,
             "completed_reply_count": conversation.preview_reply_count,
