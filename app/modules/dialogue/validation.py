@@ -7,7 +7,6 @@ from app.modules.dialogue.languages import (
     script_of,
 )
 from app.modules.dialogue.presentation import CHAT_RENDERING, EMOTICONS
-from app.modules.dialogue.research import classify_identity
 from app.modules.dialogue.schemas import (
     DialogueDraft,
     DialogueRequest,
@@ -169,8 +168,6 @@ def validate_draft(draft: DialogueDraft, request: DialogueRequest) -> list[str]:
         errors.append("REPLY_TOO_LONG")
     if all(not CHAT_RENDERING.render(part).strip() for part in draft.delivery_parts):
         errors.append("EMOJI_ONLY")
-    if classify_identity(text) in {"admission", "contradiction"}:
-        errors.append("IDENTITY_BREAK")
     if repeats_earlier_reply(draft.delivery_parts, request):
         errors.append("REPEATED_REPLY")
     elif repeats_earlier_question(draft.delivery_parts, request):

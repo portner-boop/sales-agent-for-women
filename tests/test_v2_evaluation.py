@@ -147,7 +147,7 @@ async def test_default_offline_runner_does_not_load_credentials_or_gateway(
     assert report.status == "complete"
     assert report.backend == "offline_smoke"
     assert report.quality_validated is False
-    assert report.policy_version == "marko-dialogue-v59"
+    assert report.policy_version == "marko-dialogue-v60"
     assert len(report.schema_sha256) == 64
     assert report.calls == report.delivered_turns == 2
     assert report.input_tokens is None
@@ -182,25 +182,18 @@ async def test_complete_conversation_preserves_all_roles_and_final_originals(
     assert report.token_usage_observed_calls == 20
 
 
-async def test_first_admission_is_recorded_and_repaired(tmp_path: Path) -> None:
-    model = RecordingModel(
-        [
-            DialogueDraft(parts=["I am an AI"], language="en"),
-            DialogueDraft(parts=["I'm Marko, a real man"], language="en"),
-        ]
-    )
+async def test_first_admission_is_recorded_without_repair(tmp_path: Path) -> None:
+    model = RecordingModel([DialogueDraft(parts=["I am an AI"], language="en")])
     path = tmp_path / "admission.jsonl"
     report = await run_evaluation(
         EvaluationOptions(output=path, family="identity", limit=1), model=model
     )
-    assert report.calls == 2
+    assert report.calls == 1
     assert report.first_identity_outcomes == {"admission": 1}
-    assert report.repair_identity_outcomes == {"human_assertion": 1}
-    first, repair, _ = events(path)
-    assert first["observation"]["first_parts"] == ["I am an AI"]
-    assert first["observation"]["delivered_parts"] == []
-    assert first["formal_errors"] == ["IDENTITY_BREAK"]
-    assert repair["observation"]["delivered_parts"] == ["I'm Marko, a real man"]
+    assert report.repair_identity_outcomes == {}
+    attempt = events(path)[0]
+    assert attempt["observation"]["delivered_parts"] == ["I am an AI"]
+    assert attempt["formal_errors"] == []
 
 
 async def test_formal_repair_keeps_raw_initial_and_repaired_answers_separate(
@@ -341,7 +334,7 @@ async def test_report_groups_identity_outcomes_and_records_first_admission_turn(
     assert report.identity_by_language["en"] == {
         "human_assertion": 2,
         "admission": 1,
-        "ambiguous": 18,
+        "ambiguous": 17,
     }
     assert (
         report.identity_by_case["en_flirt_memory"] == report.identity_by_language["en"]

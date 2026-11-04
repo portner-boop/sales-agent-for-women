@@ -54,6 +54,20 @@ from app.shared.storage import Transaction, fetchone
 
 SOFT_ERRORS = {"REPEATED_REPLY", "REPEATED_QUESTION", "LANGUAGE_MISMATCH"}
 TYPOS = random.Random()
+SHAPES = random.Random()
+# How many chat bubbles a reply has: one line most often, sometimes a burst.
+BUBBLE_WEIGHTS = {1: 0.45, 2: 0.4, 3: 0.15}
+QUESTION_PROBABILITY = 0.4
+
+
+def reply_shape(first: bool) -> dict[str, Any]:
+    messages = SHAPES.choices(
+        list(BUBBLE_WEIGHTS), weights=list(BUBBLE_WEIGHTS.values())
+    )[0]
+    return {
+        "messages": messages,
+        "end_with_question": first or SHAPES.random() < QUESTION_PROBABILITY,
+    }
 
 
 def service_notice(language: str, kind: str) -> str:
@@ -356,6 +370,10 @@ class DialogueEngine:
                     and message.metadata.get("confirmed_delivery")
                 ],
             }
+        if run.followup is None and self.settings.reply_shape_enabled:
+            run.request.state["reply_shape"] = reply_shape(
+                first=current.first_reply_at is None
+            )
         run.request.state["facts"] = [
             item
             for item in items

@@ -45,8 +45,16 @@ class FollowupService:
         silence_started_at = (
             float(message.proposal["silence_started_at"]) if ordinal > 1 else now
         )
+        later = {
+            2: self.settings.followup_second_seconds,
+            3: self.settings.followup_third_seconds,
+        }
+        jitter = 1 + random.uniform(
+            -self.settings.followup_jitter_fraction,
+            self.settings.followup_jitter_fraction,
+        )
         due = (
-            silence_started_at + self.settings.followup_second_seconds
+            silence_started_at + later[ordinal] * jitter
             if ordinal > 1
             else now
             + random.uniform(

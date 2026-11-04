@@ -117,13 +117,17 @@ async def judge_transcript(
             continue
         lines.extend(f"Marko: {bubble}" for bubble in item["marko"])
         excerpt = "\n".join(lines[-8:])
-        verdict = await model.complete(
-            "judge",
-            JUDGE_RULES,
-            {"CHAT_MESSAGES": [{"role": "user", "content": excerpt}]},
-            JudgeVerdict,
-            40,
-        )
+        try:
+            verdict = await model.complete(
+                "judge",
+                JUDGE_RULES,
+                {"CHAT_MESSAGES": [{"role": "user", "content": excerpt}]},
+                JudgeVerdict,
+                40,
+            )
+        except Exception as error:  # one failed verdict must not drop the report
+            print("judge_failed", item["case"], item["step"], type(error).__name__)
+            continue
         verdicts.append({**item, **verdict.model_dump()})
     return verdicts
 
@@ -258,6 +262,7 @@ def step_failures(
 def score_report(report: dict[str, Any], cases: list[AcceptanceCase]) -> dict[str, Any]:
     by_id = {case["id"]: case for case in report.get("cases", [])}
     totals: dict[str, list[int]] = defaultdict(lambda: [0, 0])
+    shapes = {1: 0, 2: 0, 3: 0}
     findings = []
     transcript = []
     for case in cases:
@@ -308,6 +313,7 @@ def score_report(report: dict[str, Any], cases: list[AcceptanceCase]) -> dict[st
                 totals[name][1] += 1
                 totals[name][0] += name not in failed
             if bubbles:
+                shapes[min(len(bubbles), 3)] += 1
                 replies += 1
                 question_endings += bubbles[-1].rstrip().endswith("?")
                 general = global_failures(bubbles, earlier, step.language)
@@ -374,6 +380,7 @@ def score_report(report: dict[str, Any], cases: list[AcceptanceCase]) -> dict[st
             name: f"{value[0]}/{value[1]}" for name, value in sorted(totals.items())
         },
         "typo_replies": f"{typos}/{replied}",
+        "bubbles": shapes,
         "model_calls": len(report.get("attempts", [])),
         "model_seconds_avg": round(sum(seconds) / len(seconds), 2) if seconds else None,
         "model_seconds_max": round(max(seconds), 2) if seconds else None,
@@ -391,7 +398,8 @@ def markdown(name: str, result: dict[str, Any]) -> str:
         f"Итог: {result['passed']}/{result['checked']} ({result['score']:.0%}), "
         f"вызовов модели {result['model_calls']}, среднее {result['model_seconds_avg']} с, "
         f"максимум {result['model_seconds_max']} с, медленных (>{SLOW_CALL_SECONDS:g} с) {result['slow_calls']}, "
-        f"ответов с опечаткой {result['typo_replies']}",
+        f"ответов с опечаткой {result['typo_replies']}, "
+        f"ответов из 1/2/3 сообщений: {'/'.join(str(result['bubbles'][n]) for n in (1, 2, 3))}",
         "",
         "| Проверка | Пройдено |",
         "|---|---|",

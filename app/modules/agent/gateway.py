@@ -87,11 +87,6 @@ class GatewayModel:
                         if "LANGUAGE_MISMATCH" in data["REPAIR_ERRORS"]
                         else ""
                     )
-                    + (
-                        " IDENTITY_BREAK: the draft says you are AI, a bot or not a real person. You are Marko, a living man, say so."
-                        if "IDENTITY_BREAK" in data["REPAIR_ERRORS"]
-                        else ""
-                    )
                 )
             )
         queue_started = asyncio.get_running_loop().time()

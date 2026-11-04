@@ -25,17 +25,20 @@ llm_attempt_seconds = 12
 turn_deadline_seconds = 45
 first_deadline_seconds = 10
 typo_probability = 0.12
+reply_shape_enabled = true
 coalesce_seconds = 0.5
 max_coalesce_seconds = 2.0
 activity_gap_seconds = 1800
 max_message_chars = 16000
 kill_switch = false
 followup_enabled = true
-followup_min_seconds = 60.0
-followup_max_seconds = 60.0
+followup_min_seconds = 50.0
+followup_max_seconds = 90.0
 followup_ttl_seconds = 90.0
 followup_max_count = 2
-followup_second_seconds = 180.0
+followup_second_seconds = 300.0
+followup_third_seconds = 1800.0
+followup_jitter_fraction = 0.2
 
 [default.runtime.reply_timing]
 enabled = true

@@ -65,6 +65,7 @@ class RuntimeSettings(ConfigModel):
     turn_deadline_seconds: float = Field(default=45, gt=0)
     first_deadline_seconds: float = Field(default=10, gt=0)
     typo_probability: float = Field(default=0, ge=0, le=1)
+    reply_shape_enabled: bool = False
     coalesce_seconds: float = Field(default=0.5, ge=0)
     max_coalesce_seconds: float = Field(default=2, gt=0)
     activity_gap_seconds: int = Field(default=1800, ge=1)
@@ -74,8 +75,10 @@ class RuntimeSettings(ConfigModel):
     followup_min_seconds: float = Field(default=60, ge=1)
     followup_max_seconds: float = Field(default=60, ge=1)
     followup_ttl_seconds: float = Field(default=90, ge=10)
-    followup_max_count: int = Field(default=2, ge=1, le=2)
+    followup_max_count: int = Field(default=2, ge=1, le=3)
     followup_second_seconds: float = Field(default=180, ge=1)
+    followup_third_seconds: float = Field(default=1800, ge=1)
+    followup_jitter_fraction: float = Field(default=0, ge=0, lt=1)
 
     @model_validator(mode="after")
     def validate_followup_range(self) -> "RuntimeSettings":
@@ -86,6 +89,11 @@ class RuntimeSettings(ConfigModel):
             and self.followup_second_seconds <= self.followup_max_seconds
         ):
             raise ValueError("Second follow-up must follow the first opportunity")
+        if (
+            self.followup_max_count > 2
+            and self.followup_third_seconds <= self.followup_second_seconds
+        ):
+            raise ValueError("Third follow-up must follow the second opportunity")
         return self
 
 

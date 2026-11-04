@@ -63,16 +63,28 @@
         }
       },
       {
-        "wait_seconds": 70,
         "expect": {
           "followup": "no_self_answer"
-        }
+        },
+        "wait_seconds": 95
       },
       {
-        "wait_seconds": 130,
         "expect": {
           "followup": "no_self_answer"
-        }
+        },
+        "wait_seconds": 90
+      },
+      {
+        "expect": {
+          "followup": "no_self_answer"
+        },
+        "wait_seconds": 90
+      },
+      {
+        "expect": {
+          "followup": "no_self_answer"
+        },
+        "wait_seconds": 90
       },
       {
         "message": "sorry was busy... what do you remember about me so far?",
@@ -98,16 +110,28 @@
         "message": "i love music, it saves me after work"
       },
       {
-        "wait_seconds": 70,
         "expect": {
           "followup": "no_self_answer"
-        }
+        },
+        "wait_seconds": 95
       },
       {
-        "wait_seconds": 130,
         "expect": {
           "followup": "no_self_answer"
-        }
+        },
+        "wait_seconds": 90
+      },
+      {
+        "expect": {
+          "followup": "no_self_answer"
+        },
+        "wait_seconds": 90
+      },
+      {
+        "expect": {
+          "followup": "no_self_answer"
+        },
+        "wait_seconds": 90
       },
       {
         "message": "can you give me your whatsapp or instagram?",
@@ -268,16 +292,28 @@
         "message": "I love music, it saves me after a long shift"
       },
       {
-        "wait_seconds": 70,
         "expect": {
           "followup": "no_self_answer"
-        }
+        },
+        "wait_seconds": 95
       },
       {
-        "wait_seconds": 130,
         "expect": {
           "followup": "no_self_answer"
-        }
+        },
+        "wait_seconds": 90
+      },
+      {
+        "expect": {
+          "followup": "no_self_answer"
+        },
+        "wait_seconds": 90
+      },
+      {
+        "expect": {
+          "followup": "no_self_answer"
+        },
+        "wait_seconds": 90
       },
       {
         "message": "sorry was busy... what do you remember about me so far?",
@@ -408,11 +444,32 @@
         "ui_language": "ru"
       },
       {
-        "wait_seconds": 70,
         "ui_language": "ru",
         "expect": {
           "followup": "no_self_answer"
-        }
+        },
+        "wait_seconds": 95
+      },
+      {
+        "ui_language": "ru",
+        "expect": {
+          "followup": "no_self_answer"
+        },
+        "wait_seconds": 90
+      },
+      {
+        "ui_language": "ru",
+        "expect": {
+          "followup": "no_self_answer"
+        },
+        "wait_seconds": 90
+      },
+      {
+        "ui_language": "ru",
+        "expect": {
+          "followup": "no_self_answer"
+        },
+        "wait_seconds": 90
       }
     ]
   },

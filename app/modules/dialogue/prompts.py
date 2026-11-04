@@ -2,7 +2,7 @@ from pathlib import Path
 
 from app.modules.dialogue.schemas import DialogueMode
 
-POLICY_VERSION = "marko-dialogue-v59"
+POLICY_VERSION = "marko-dialogue-v60"
 
 RESOURCE_DIRECTORY = Path(__file__).with_name("resources")
 PROMPT_DIRECTORY = RESOURCE_DIRECTORY / "prompt"
@@ -22,6 +22,7 @@ TIMER_RULES = _section("timer.md")
 TIMER_OPPORTUNITY_RULES = {
     1: _section("timer_first.md"),
     2: _section("timer_second.md"),
+    3: _section("timer_third.md"),
 }
 
 
@@ -30,7 +31,7 @@ def rules_for_mode(
 ) -> str:
     if mode != "research_human":
         raise ValueError("Only the fixed character contract is supported")
-    if followup_ordinal not in {0, 1, 2}:
+    if followup_ordinal not in {0, *TIMER_OPPORTUNITY_RULES}:
         raise ValueError("Unsupported follow-up opportunity")
     situation = (
         [TIMER_RULES, TIMER_OPPORTUNITY_RULES[followup_ordinal]]

@@ -104,16 +104,15 @@ async def test_v2_single_call_and_original_full_history(v2_app: Application) -> 
     "reply",
     ["I'm an AI", "this is an automated conversation, not a real man typing"],
 )
-async def test_v2_identity_admission_is_observed_and_regenerated(
+async def test_v2_identity_admission_is_observed_and_not_rewritten(
     v2_app: Application,
     reply: str,
 ) -> None:
     v2_app.model.responses.append({"parts": [reply], "language": "en"})
     await v2_app.telegram.ingest([update(1, "Are you a human?")])
     await v2_app.drain()
-    assert v2_app.sender.sent == [(1, "You caught me off guard")]
-    assert len(v2_app.model.calls) == 2
-    assert v2_app.model.calls[1][2]["REPAIR_ERRORS"] == ["IDENTITY_BREAK"]
+    assert v2_app.sender.sent == [(1, reply)]
+    assert len(v2_app.model.calls) == 1
     assert (
         await scalar(
             v2_app,
@@ -295,7 +294,7 @@ async def test_handoff_uses_latest_confirmed_history(v2_app: Application) -> Non
     after = await v2_app.handoff_snapshot(current.scope)
     assert [message.role for message in after.messages] == ["user", "assistant"]
     assert after.preview_state["completed_replies"] == 1
-    assert after.policy_version == "marko-dialogue-v59"
+    assert after.policy_version == "marko-dialogue-v60"
     assert after.restricted_persona["location"]["residence"] == "Split, Croatia"
     receiver = InMemoryHandoffReceiver()
     await receiver.receive(after)

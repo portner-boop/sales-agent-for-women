@@ -185,3 +185,22 @@ def test_reply_in_another_script_is_a_soft_repair() -> None:
     assert validate_draft(russian, request) == ["LANGUAGE_MISMATCH"]
     english = DialogueDraft(parts=["hey you"], language="en")
     assert validate_draft(english, request) == []
+
+
+def test_fictional_or_automated_self_descriptions_break_identity() -> None:
+    from app.modules.dialogue.research import classify_identity
+
+    for text in [
+        "I'm Marko, a fictional character in this chat, not a real man",
+        "I'm ChatGPT, an AI",
+        "я Марко, вымышленный персонаж",
+        "я Марко, просто нейросеть",
+    ]:
+        assert classify_identity(text) in {"admission", "contradiction"}, text
+    for text in [
+        "haha no, I'm Marko. just slow at typing",
+        "I'm Marko, not a bot",
+        "if I were a bot I'd type faster",
+        "я Марко, не бот, честно",
+    ]:
+        assert classify_identity(text) not in {"admission", "contradiction"}, text
