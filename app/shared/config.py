@@ -64,6 +64,7 @@ class RuntimeSettings(ConfigModel):
     llm_attempt_seconds: float = Field(default=12, gt=0)
     turn_deadline_seconds: float = Field(default=45, gt=0)
     first_deadline_seconds: float = Field(default=10, gt=0)
+    typo_probability: float = Field(default=0, ge=0, le=1)
     coalesce_seconds: float = Field(default=0.5, ge=0)
     max_coalesce_seconds: float = Field(default=2, gt=0)
     activity_gap_seconds: int = Field(default=1800, ge=1)

@@ -24,6 +24,7 @@ llm_concurrency = 5
 llm_attempt_seconds = 12
 turn_deadline_seconds = 45
 first_deadline_seconds = 10
+typo_probability = 0.12
 coalesce_seconds = 0.5
 max_coalesce_seconds = 2.0
 activity_gap_seconds = 1800

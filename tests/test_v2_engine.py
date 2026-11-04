@@ -295,7 +295,7 @@ async def test_handoff_uses_latest_confirmed_history(v2_app: Application) -> Non
     after = await v2_app.handoff_snapshot(current.scope)
     assert [message.role for message in after.messages] == ["user", "assistant"]
     assert after.preview_state["completed_replies"] == 1
-    assert after.policy_version == "marko-dialogue-v57"
+    assert after.policy_version == "marko-dialogue-v58"
     assert after.restricted_persona["location"]["residence"] == "Split, Croatia"
     receiver = InMemoryHandoffReceiver()
     await receiver.receive(after)

@@ -103,3 +103,63 @@ def test_later_client_remarks_are_detected() -> None:
     assert step_failures(
         {"no_lecture": True}, ["it's Rayleigh scattering of sunlight"], []
     ) == ["no_lecture"]
+
+
+def test_typo_changes_one_lowercase_word_only() -> None:
+    import random
+
+    from app.modules.dialogue.presentation import add_typo
+
+    rng = random.Random(1)
+    for _ in range(50):
+        changed = add_typo("Marko is making coffee", rng)
+        assert changed.startswith("Marko is ")
+        assert changed != "Marko is making coffee"
+        assert (
+            sum(
+                a != b
+                for a, b in zip(
+                    changed.split(), "Marko is making coffee".split(), strict=False
+                )
+            )
+            == 1
+        )
+    assert add_typo("I am Marko", rng) == "I am Marko"
+
+
+def test_spoken_time_is_rounded_and_part_of_day_is_right() -> None:
+    from app.modules.dialogue.daily_life import part_of_day, spoken_time
+
+    assert spoken_time(10, 7) == "about 10"
+    assert spoken_time(22, 51) == "about quarter to 11"
+    assert spoken_time(11, 58) == "almost 12"
+    assert part_of_day(11) == "morning"
+    assert part_of_day(19) == "evening"
+
+
+def test_repeated_question_is_a_soft_repair() -> None:
+    from app.modules.dialogue.context import build_request
+    from app.modules.dialogue.schemas import DialogueDraft
+    from app.modules.dialogue.validation import validate_draft
+    from tests.test_v2_dialogue import message, session
+
+    asked = message(2, "assistant", "what kind of dog is Bruno?")
+    request = build_request(session(), [message(1), asked], [message(3)])
+    draft = DialogueDraft(
+        parts=["ha", "tell me what kind of dog Bruno is?"], language="en"
+    )
+    assert validate_draft(draft, request) == ["REPEATED_QUESTION"]
+
+
+def test_duplicate_bubbles_inside_one_reply_are_repaired() -> None:
+    from app.modules.dialogue.context import build_request
+    from app.modules.dialogue.schemas import DialogueDraft
+    from app.modules.dialogue.validation import validate_draft
+    from tests.test_v2_dialogue import message, session
+
+    request = build_request(session(), [], [message(1)])
+    draft = DialogueDraft(
+        parts=["pretty calm evening here", "pretty calm evening here, you?"],
+        language="en",
+    )
+    assert validate_draft(draft, request) == ["REPEATED_REPLY"]

@@ -271,7 +271,7 @@ def test_handoff_preserves_policy_preview_and_complete_canonical_persona() -> No
     )
     request.state["service_events"] = [{"sequence": 35, "text": "Platform invitation"}]
     snapshot = build_handoff(request)
-    assert snapshot.policy_version == "marko-dialogue-v57"
+    assert snapshot.policy_version == "marko-dialogue-v58"
     assert snapshot.preview_state == {
         "completed_replies": 19,
         "completed_pairs": 18,

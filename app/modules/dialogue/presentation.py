@@ -1,3 +1,4 @@
+import random
 import re
 import tomllib
 from pathlib import Path
@@ -32,6 +33,26 @@ def strip_smileys(text: str) -> str:
         del kept[index]
     lines = [" ".join(line.split()) for line in "".join(kept).splitlines()]
     return re.sub(r" ([,.!?])", r"\1", "\n".join(line for line in lines if line))
+
+
+TYPO_WORD = re.compile(r"\b[^\W\d_]{5,}\b")
+
+
+def add_typo(text: str, rng: random.Random) -> str:
+    words = [match for match in TYPO_WORD.finditer(text) if match.group().islower()]
+    if not words:
+        return text
+    match = rng.choice(words)
+    word = match.group()
+    index = rng.randrange(1, len(word) - 2)
+    kind = rng.choice(("swap", "drop", "double"))
+    if kind == "swap":
+        changed = word[:index] + word[index + 1] + word[index] + word[index + 2 :]
+    elif kind == "drop":
+        changed = word[:index] + word[index + 1 :]
+    else:
+        changed = word[: index + 1] + word[index:]
+    return text[: match.start()] + changed + text[match.end() :]
 
 
 class ChatRendering(BaseModel):

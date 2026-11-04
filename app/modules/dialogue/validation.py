@@ -53,7 +53,15 @@ def repeats_earlier_reply(parts: list[str], request: DialogueRequest) -> bool:
         for message in request.original_messages
         if message.role == "assistant"
     ]
-    for part in map(_comparable, parts):
+    current = [_comparable(part) for part in parts]
+    if any(
+        SequenceMatcher(None, left, right).ratio() >= 0.6
+        for index, left in enumerate(current)
+        for right in current[index + 1 :]
+        if len(left) >= 12 and len(right) >= 12
+    ):
+        return True
+    for part in current:
         if len(part) < 24:
             continue
         if any(
@@ -63,6 +71,20 @@ def repeats_earlier_reply(parts: list[str], request: DialogueRequest) -> bool:
         ):
             return True
     return False
+
+
+def repeats_earlier_question(parts: list[str], request: DialogueRequest) -> bool:
+    earlier = [
+        _comparable(message.text)
+        for message in request.original_messages
+        if message.role == "assistant" and "?" in message.text
+    ]
+    return any(
+        SequenceMatcher(None, _comparable(part), previous).ratio() >= 0.65
+        for part in parts
+        if "?" in part
+        for previous in earlier
+    )
 
 
 def detected_language_mismatch(text: str, language: str) -> bool:
@@ -136,6 +158,8 @@ def validate_draft(draft: DialogueDraft, request: DialogueRequest) -> list[str]:
         errors.append("IDENTITY_BREAK")
     if repeats_earlier_reply(draft.delivery_parts, request):
         errors.append("REPEATED_REPLY")
+    elif repeats_earlier_question(draft.delivery_parts, request):
+        errors.append("REPEATED_QUESTION")
     if re.search(r"https?://|www\.", text, re.I):
         errors.append("UNAPPROVED_URL")
     known_ids = {message.id for message in request.original_messages}

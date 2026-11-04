@@ -1,4 +1,5 @@
 import asyncio
+import random
 from collections import defaultdict
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass, field
@@ -23,7 +24,7 @@ from app.modules.delivery.repository import DeliveryRepository
 from app.modules.delivery.schemas import OutboxDraft
 from app.modules.delivery.timing import DeliveryTiming
 from app.modules.dialogue.context import build_request
-from app.modules.dialogue.presentation import CHAT_RENDERING
+from app.modules.dialogue.presentation import CHAT_RENDERING, add_typo
 from app.modules.dialogue.prompts import POLICY_VERSION, rules_for_mode
 from app.modules.dialogue.research import observe_response
 from app.modules.dialogue.schemas import (
@@ -51,7 +52,8 @@ from app.shared.entities import (
 )
 from app.shared.storage import Transaction, fetchone
 
-SOFT_ERRORS = {"REPEATED_REPLY"}
+SOFT_ERRORS = {"REPEATED_REPLY", "REPEATED_QUESTION"}
+TYPOS = random.Random()
 
 
 def service_notice(language: str, kind: str) -> str:
@@ -592,6 +594,10 @@ class DialogueEngine:
             for text in draft.delivery_parts
             if (rendered := CHAT_RENDERING.render(text)).strip()
         ]
+        typo = bool(rendered_parts) and TYPOS.random() < self.settings.typo_probability
+        if typo:
+            index = TYPOS.randrange(len(rendered_parts))
+            rendered_parts[index] = add_typo(rendered_parts[index], TYPOS)
         timing = DeliveryTiming(self.settings.reply_timing)
         durations = [timing.duration(text) for text in rendered_parts]
 
@@ -646,6 +652,7 @@ class DialogueEngine:
                         },
                         "origin": "followup" if run.followup else "dialogue_v2",
                         "reply": rendered,
+                        "typo": typo,
                         "rendering": CHAT_RENDERING.model_dump(),
                         "response_language": draft.language,
                         "conversation_action": draft.conversation_action,

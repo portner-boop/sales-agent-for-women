@@ -338,6 +338,21 @@ def score_report(report: dict[str, Any], cases: list[AcceptanceCase]) -> dict[st
                         "failed": ["not_always_question"],
                     }
                 )
+    delivered = [
+        action
+        for case in report.get("cases", [])
+        for step in case["steps"]
+        for action in step.get("actions", [])
+        if action.get("kind") == "reply"
+    ]
+    replied = len({action.get("turn_id") for action in delivered})
+    typos = len(
+        {
+            action.get("turn_id")
+            for action in delivered
+            if action.get("proposal", {}).get("typo")
+        }
+    )
     seconds = [
         float(attempt["seconds"])
         for attempt in report.get("attempts", [])
@@ -352,6 +367,7 @@ def score_report(report: dict[str, Any], cases: list[AcceptanceCase]) -> dict[st
         "checks": {
             name: f"{value[0]}/{value[1]}" for name, value in sorted(totals.items())
         },
+        "typo_replies": f"{typos}/{replied}",
         "model_calls": len(report.get("attempts", [])),
         "model_seconds_avg": round(sum(seconds) / len(seconds), 2) if seconds else None,
         "model_seconds_max": round(max(seconds), 2) if seconds else None,
@@ -368,7 +384,8 @@ def markdown(name: str, result: dict[str, Any]) -> str:
         "",
         f"Итог: {result['passed']}/{result['checked']} ({result['score']:.0%}), "
         f"вызовов модели {result['model_calls']}, среднее {result['model_seconds_avg']} с, "
-        f"максимум {result['model_seconds_max']} с, медленных (>{SLOW_CALL_SECONDS:g} с) {result['slow_calls']}",
+        f"максимум {result['model_seconds_max']} с, медленных (>{SLOW_CALL_SECONDS:g} с) {result['slow_calls']}, "
+        f"ответов с опечаткой {result['typo_replies']}",
         "",
         "| Проверка | Пройдено |",
         "|---|---|",
