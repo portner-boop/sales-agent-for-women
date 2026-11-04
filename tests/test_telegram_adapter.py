@@ -136,6 +136,12 @@ async def test_telegram_menu_contains_only_four_commands() -> None:
     commands = bot.set_my_commands.call_args.args[0]
     assert [item.command for item in commands] == ["start", "stop", "privacy", "forget"]
     bot.set_my_commands.assert_awaited_once()
+    cleared = {
+        (call.kwargs["scope"].type, call.kwargs["language_code"])
+        for call in bot.delete_my_commands.await_args_list
+    }
+    assert ("all_private_chats", "ru") in cleared
+    assert ("default", None) in cleared
 
 
 @pytest.mark.parametrize(

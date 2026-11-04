@@ -9,7 +9,13 @@ from aiogram.exceptions import (
     TelegramRetryAfter,
     TelegramServerError,
 )
-from aiogram.types import BotCommand
+from aiogram.types import (
+    BotCommand,
+    BotCommandScopeAllChatAdministrators,
+    BotCommandScopeAllGroupChats,
+    BotCommandScopeAllPrivateChats,
+    BotCommandScopeDefault,
+)
 
 from app.modules.delivery.entities import SendResult
 from app.modules.telegram.service import TelegramService
@@ -18,7 +24,25 @@ from app.modules.telegram.typing import TelegramTyping
 logger = logging.getLogger(__name__)
 
 
+MENU_SCOPES = (
+    BotCommandScopeDefault(),
+    BotCommandScopeAllPrivateChats(),
+    BotCommandScopeAllGroupChats(),
+    BotCommandScopeAllChatAdministrators(),
+)
+MENU_LANGUAGES = (None, "ru", "en", "uk", "es", "pt", "de", "fr", "it", "lt")
+
+
 async def configure_commands(bot: Bot) -> None:
+    # Telegram keeps menus per scope and language; stale ones override the default.
+    for scope in MENU_SCOPES:
+        for language in MENU_LANGUAGES:
+            try:
+                await bot.delete_my_commands(scope=scope, language_code=language)
+            except (TelegramBadRequest, TelegramNetworkError, TelegramServerError):
+                logger.warning(
+                    "menu_cleanup_failed scope=%s language=%s", scope.type, language
+                )
     await bot.set_my_commands(
         [
             BotCommand(command="start", description="Начать переписку"),
