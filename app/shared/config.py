@@ -102,12 +102,12 @@ class MemorySettings(ConfigModel):
 
 
 class CommerceSettings(ConfigModel):
-    preview_min_replies: int = Field(default=15, ge=15, le=19)
+    preview_min_replies: int = Field(default=15, ge=15, le=20)
     preview_max_replies: int = Field(default=20, ge=2, le=20)
 
     @model_validator(mode="after")
     def validate_preview_range(self) -> "CommerceSettings":
-        if self.preview_max_replies <= self.preview_min_replies:
+        if self.preview_max_replies < self.preview_min_replies:
             raise ValueError("Preview maximum must exceed minimum")
         return self
 

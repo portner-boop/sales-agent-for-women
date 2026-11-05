@@ -5,6 +5,7 @@ from typing import Any
 import pytest
 
 from app.application import Application
+from app.modules.agent.dialogue_engine import invitation_line
 from app.modules.agent.entities import SchemaT
 from app.modules.dialogue.tokens import ContextBudget
 from app.shared.clock import MutableClock
@@ -294,7 +295,7 @@ async def test_handoff_uses_latest_confirmed_history(v2_app: Application) -> Non
     after = await v2_app.handoff_snapshot(current.scope)
     assert [message.role for message in after.messages] == ["user", "assistant"]
     assert after.preview_state["completed_replies"] == 1
-    assert after.policy_version == "marko-dialogue-v61"
+    assert after.policy_version == "marko-dialogue-v62"
     assert after.restricted_persona["location"]["residence"] == "Split, Croatia"
     receiver = InMemoryHandoffReceiver()
     await receiver.receive(after)
@@ -524,7 +525,7 @@ async def test_invitation_is_chosen_in_window_or_added_at_final_reply(
     assert len(app.model.calls) == 2
 
 
-async def test_explicit_pause_suppresses_final_invitation(v2_app: Application) -> None:
+async def test_final_invitation_is_sent_even_with_a_pause(v2_app: Application) -> None:
     app = v2_app
     await app.telegram.ingest([update(1, "hello")])
     await app.drain()
@@ -538,8 +539,10 @@ async def test_explicit_pause_suppresses_final_invitation(v2_app: Application) -
     )
     await app.telegram.ingest([update(2, "wait, let me finish")])
     await app.drain()
-    assert (await conversation(app)).invitation_state == "none"
-    assert all("https://" not in text for _, text in app.sender.sent)
+    assert (await conversation(app)).invitation_state == "delivered"
+    sent = [text for _, text in app.sender.sent]
+    assert sent[-3:-1] == ["go on", invitation_line("en")]
+    assert "https://www.behappy2day.com/" in sent[-1]
     app.clock.advance(200)
     await app.drain()
     assert len(app.model.calls) == 2

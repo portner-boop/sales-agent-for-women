@@ -53,5 +53,5 @@ maximum_seconds = 60.0
 context_tokens = 64000
 
 [default.commerce]
-preview_min_replies = 15
+preview_min_replies = 20
 preview_max_replies = 20

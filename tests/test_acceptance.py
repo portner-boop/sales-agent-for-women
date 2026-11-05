@@ -204,3 +204,18 @@ def test_fictional_or_automated_self_descriptions_break_identity() -> None:
         "я Марко, не бот, честно",
     ]:
         assert classify_identity(text) not in {"admission", "contradiction"}, text
+
+
+def test_stray_cjk_inside_russian_reply_is_repaired() -> None:
+    from app.modules.dialogue.context import build_request
+    from app.modules.dialogue.schemas import DialogueDraft
+    from app.modules.dialogue.validation import validate_draft
+    from tests.test_v2_dialogue import message, session
+
+    request = build_request(
+        session(), [], [message(1, text="что любишь делать вечером?")]
+    )
+    draft = DialogueDraft(
+        parts=["пройтись по Риве, когда там уже少людно"], language="ru"
+    )
+    assert validate_draft(draft, request) == ["LANGUAGE_MISMATCH"]

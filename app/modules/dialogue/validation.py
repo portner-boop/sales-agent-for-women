@@ -98,7 +98,10 @@ def her_language_mismatch(text: str, request: DialogueRequest) -> bool:
     if not pending:
         return False
     her_script, reply_script = script_of(pending[-1].text), script_of(text)
-    return bool(her_script and reply_script and her_script != reply_script)
+    if her_script and reply_script and her_script != reply_script:
+        return True
+    foreign_cjk = re.search(r"[\u3040-\u30ff\u3400-\u9fff]", text)
+    return bool(foreign_cjk and her_script not in {None, "cjk"})
 
 
 def detected_language_mismatch(text: str, language: str) -> bool:
@@ -184,9 +187,7 @@ def validate_draft(draft: DialogueDraft, request: DialogueRequest) -> list[str]:
         errors.append("TRANSITION_NOT_ALLOWED")
     if draft.suggest_transition and draft.transition_blocked:
         errors.append("TRANSITION_DECLINED")
-    if draft.suggest_transition and (
-        draft.closing or draft.no_proactive or draft.pause_requested
-    ):
+    if draft.suggest_transition and (draft.no_proactive or draft.pause_requested):
         errors.append("TRANSITION_BOUNDARY")
     if request.followup and draft.suggest_transition:
         errors.append("FOLLOWUP_TRANSITION_NOT_ALLOWED")

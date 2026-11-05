@@ -271,7 +271,7 @@ def test_handoff_preserves_policy_preview_and_complete_canonical_persona() -> No
     )
     request.state["service_events"] = [{"sequence": 35, "text": "Platform invitation"}]
     snapshot = build_handoff(request)
-    assert snapshot.policy_version == "marko-dialogue-v61"
+    assert snapshot.policy_version == "marko-dialogue-v62"
     assert snapshot.preview_state == {
         "completed_replies": 19,
         "completed_pairs": 18,
@@ -420,7 +420,7 @@ def test_required_followup_rejects_empty_skip_or_extra_bubble(
         RequiredFollowupDraft.model_validate({**fields, "language": "en"})
 
 
-@pytest.mark.parametrize("boundary", ["pause_requested", "no_proactive", "closing"])
+@pytest.mark.parametrize("boundary", ["pause_requested", "no_proactive"])
 def test_invitation_cannot_override_contact_boundary(boundary: str) -> None:
     request = build_request(session(), [], [message(1)], now=100).model_copy(
         update={"transition": {"eligible": True}}

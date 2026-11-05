@@ -52,7 +52,11 @@ from app.shared.entities import (
 )
 from app.shared.storage import Transaction, fetchone
 
-SOFT_ERRORS = {"REPEATED_REPLY", "REPEATED_QUESTION", "LANGUAGE_MISMATCH"}
+SOFT_ERRORS = {
+    "REPEATED_REPLY",
+    "REPEATED_QUESTION",
+    "LANGUAGE_MISMATCH",
+}
 TYPOS = random.Random()
 SHAPES = random.Random()
 # How many chat bubbles a reply has: one line most often, sometimes a burst.
@@ -95,14 +99,14 @@ def service_notice(language: str, kind: str) -> str:
             "zh": "消息超出了本次对话的容量，请缩短一些",
         },
         "invitation": {
-            "ru": "Если хочешь продолжить, на BeHappy2Day общение платное. Перенос этой беседы пока проверяется в тестовом режиме",
-            "en": "Further chatting on BeHappy2Day is paid. Transfer of this conversation is currently a test integration",
-            "es": "Continuar en BeHappy2Day es de pago. La transferencia de esta conversación aún está en pruebas",
-            "pt": "Continuar no BeHappy2Day é pago. A transferência desta conversa ainda está em testes",
-            "fr": "La suite sur BeHappy2Day est payante. Le transfert de cette conversation est encore en phase de test",
-            "de": "Die Fortsetzung auf BeHappy2Day ist kostenpflichtig. Die Übertragung dieses Gesprächs wird noch getestet",
-            "ar": "مواصلة المحادثة على BeHappy2Day مدفوعة. نقل هذه المحادثة ما زال قيد الاختبار",
-            "zh": "在 BeHappy2Day 继续聊天需要付费。本次对话的转移功能仍在测试中",
+            "ru": "BeHappy2Day, общение там платное",
+            "en": "BeHappy2Day, chatting there is paid",
+            "es": "BeHappy2Day, allí el chat es de pago",
+            "pt": "BeHappy2Day, lá a conversa é paga",
+            "fr": "BeHappy2Day, la conversation y est payante",
+            "de": "BeHappy2Day, dort ist das Schreiben kostenpflichtig",
+            "ar": "BeHappy2Day، المحادثة هناك مدفوعة",
+            "zh": "BeHappy2Day，那里的聊天需要付费",
         },
         "closing": {
             "ru": "Пробная беседа здесь завершена",
@@ -117,6 +121,21 @@ def service_notice(language: str, kind: str) -> str:
     }
     choices = notices[kind]
     return choices.get(language.split("-")[0], choices["en"])
+
+
+INVITATION_LINES = {
+    "ru": "здесь я почти не бываю, давай продолжим на BeHappy2Day, мне правда хочется",
+    "en": "I'm barely here, let's keep talking on BeHappy2Day, I'd really like that",
+    "es": "aquí casi no entro, sigamos en BeHappy2Day, de verdad me gustaría",
+    "pt": "quase não entro aqui, vamos continuar no BeHappy2Day, eu gostaria muito",
+    "de": "ich bin hier kaum, lass uns auf BeHappy2Day weiterschreiben, das würde ich wirklich gern",
+    "fr": "je ne passe presque jamais ici, continuons sur BeHappy2Day, j'en ai vraiment envie",
+    "uk": "я тут майже не буваю, давай продовжимо на BeHappy2Day, мені справді хочеться",
+}
+
+
+def invitation_line(language: str) -> str:
+    return INVITATION_LINES.get(language.split("-")[0], INVITATION_LINES["en"])
 
 
 @dataclass
@@ -598,9 +617,10 @@ class DialogueEngine:
             transition["eligible"]
             and (draft.suggest_transition or transition["required"])
             and not draft.transition_blocked
-            and not draft.pause_requested
-            and not draft.closing
-            and not draft.no_proactive
+            and (
+                transition["required"]
+                or not (draft.pause_requested or draft.no_proactive)
+            )
             and run.followup is None
         )
         final = (
@@ -614,6 +634,10 @@ class DialogueEngine:
             for text in draft.delivery_parts
             if (rendered := CHAT_RENDERING.render(text)).strip()
         ]
+        if invitation and not any(
+            "behappy2day" in part.casefold() for part in rendered_parts
+        ):
+            rendered_parts.append(invitation_line(draft.language))
         typo = bool(rendered_parts) and TYPOS.random() < self.settings.typo_probability
         if typo:
             index = TYPOS.randrange(len(rendered_parts))
