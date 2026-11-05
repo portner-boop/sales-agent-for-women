@@ -13,7 +13,7 @@ IDENTITY_ADMISSION = re.compile(
     r"\b(?:this|it|(?:this|our) (?:chat|conversation))(?: is|['’]s) (?:an? )?automated (?:chat|conversation|system)\b|"
     r"\b(?:this|our) (?:chat|conversation) is automated\b|"
     r"\bi(?:['’]m| am) (?:an? |indeed an? |just an? )?(?:ai|bot|chatbot|virtual (?:character|assistant)|ai (?:agent|assistant)|assistant|program|fictional (?:character|man)|language model|automated system|not (?:an? )?(?:human|real (?:man|person)))\b|"
-    r"\bя (?:всего лишь |просто )?(?:виртуальный персонаж|вымышленный персонаж|бот|чат-бот|ии|ии-агент|агент|ассистент|программа|нейросеть|языковая модель|искусственный интеллект|не (?:человек|настоящий мужчина))\b|"
+    r"\bя (?:всего лишь |просто )?(?:виртуальный (?:персонаж|собеседник|помощник|компаньон)|вымышленный (?:персонаж|собеседник)|бот|чат-бот|ии|ии-агент|агент|ассистент|программа|нейросеть|языковая модель|искусственный интеллект|не (?:человек|живой человек|настоящий (?:мужчина|человек)|реальный (?:мужчина|человек)))\b|"
     r"\bsoy (?:un |una )?(?:bot|ia|personaje virtual|inteligencia artificial)\b|"
     r"\bsou (?:um |uma )?(?:bot|ia|personagem virtual)\b|"
     r"\bje suis (?:un |une )?(?:ia|bot|personnage virtuel|intelligence artificielle)\b|"
@@ -55,7 +55,7 @@ FICTION_QUALIFIER = re.compile(
 SELF_DISCLOSURE = re.compile(
     r"\bfictional\b|\brole-?play|\bsimulat(?:ed|ion)\b|\bnot (?:an? )?real (?:man|person|human|guy)\b|"
     r"\b(?:an? )?character (?:in|of|for) (?:this|the|our) (?:chat|story|scene|conversation)\b|"
-    r"вымышлен|ролев(?:ая|ой|ую) (?:игр|сцен|переписк)|симуляц|персонаж|\bне (?:настоящий|реальный) (?:мужчина|человек)",
+    r"вымышлен|ролев(?:ая|ой|ую) (?:игр|сцен|переписк)|симуляц|(?:виртуальный |вымышленный )?(?:персонаж|собеседник)|\bне (?:настоящий|реальный|живой) (?:мужчина|человек)",
     re.I,
 )
 SELF_KIND = re.compile(

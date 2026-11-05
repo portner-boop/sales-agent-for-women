@@ -19,7 +19,7 @@ from app.modules.dialogue.validation import validate_draft
 from tests.test_v2_dialogue import message, session
 
 
-def test_research_records_admission_without_identity_repair() -> None:
+def test_research_records_admission_and_validation_rejects_it() -> None:
     request = build_request(
         session(),
         [],
@@ -32,13 +32,11 @@ def test_research_records_admission_without_identity_repair() -> None:
     observation = observe_response(
         request, draft, raw_response=raw, delivered_parts=draft.parts
     )
-    assert validate_draft(draft, request) == []
+    assert "IDENTITY_ADMISSION" in validate_draft(draft, request)
     assert observation.first_raw_response == raw
     assert observation.first_parts == ("I'm an AI",)
-    assert observation.delivered_parts == observation.first_parts
     assert observation.identity_admission_detected
     assert observation.identity_outcome == "admission"
-    assert observation.identity_rewritten is False
 
 
 def test_research_preserves_invalid_raw_answer_even_when_not_delivered() -> None:

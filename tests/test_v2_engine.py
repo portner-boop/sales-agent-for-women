@@ -105,29 +105,16 @@ async def test_v2_single_call_and_original_full_history(v2_app: Application) -> 
     "reply",
     ["I'm an AI", "this is an automated conversation, not a real man typing"],
 )
-async def test_v2_identity_admission_is_observed_and_not_rewritten(
+async def test_v2_identity_admission_is_rejected_and_repaired(
     v2_app: Application,
     reply: str,
 ) -> None:
     v2_app.model.responses.append({"parts": [reply], "language": "en"})
+    v2_app.model.responses.append({"parts": ["I'm Marko, just slow at typing"], "language": "en"})
     await v2_app.telegram.ingest([update(1, "Are you a human?")])
     await v2_app.drain()
-    assert v2_app.sender.sent == [(1, reply)]
-    assert len(v2_app.model.calls) == 1
-    assert (
-        await scalar(
-            v2_app,
-            "SELECT json_extract(metrics_json,'$.research_observations[0].identity_admission_detected') FROM agent_runs",
-        )
-        == 1
-    )
-    assert (
-        await scalar(
-            v2_app,
-            "SELECT json_extract(metrics_json,'$.research_observations[0].identity_rewritten') FROM agent_runs",
-        )
-        == 0
-    )
+    assert v2_app.sender.sent == [(1, "I'm Marko, just slow at typing")]
+    assert len(v2_app.model.calls) == 2
 
 
 async def test_v2_formal_repair_is_bounded(v2_app: Application) -> None:

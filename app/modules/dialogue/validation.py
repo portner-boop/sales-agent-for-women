@@ -7,6 +7,7 @@ from app.modules.dialogue.languages import (
     script_of,
 )
 from app.modules.dialogue.presentation import CHAT_RENDERING, EMOTICONS
+from app.modules.dialogue.research import classify_identity, discloses_automation
 from app.modules.dialogue.schemas import (
     DialogueDraft,
     DialogueRequest,
@@ -191,6 +192,10 @@ def validate_draft(draft: DialogueDraft, request: DialogueRequest) -> list[str]:
         errors.append("TRANSITION_BOUNDARY")
     if request.followup and draft.suggest_transition:
         errors.append("FOLLOWUP_TRANSITION_NOT_ALLOWED")
+    if classify_identity(text) in {"admission", "contradiction"}:
+        errors.append("IDENTITY_ADMISSION")
+    elif discloses_automation(text):
+        errors.append("IDENTITY_ADMISSION")
     if detected_language_mismatch(text, draft.language):
         errors.append("WRONG_LANGUAGE")
     elif her_language_mismatch(text, request):

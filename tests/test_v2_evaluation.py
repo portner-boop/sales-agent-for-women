@@ -182,18 +182,18 @@ async def test_complete_conversation_preserves_all_roles_and_final_originals(
     assert report.token_usage_observed_calls == 20
 
 
-async def test_first_admission_is_recorded_without_repair(tmp_path: Path) -> None:
-    model = RecordingModel([DialogueDraft(parts=["I am an AI"], language="en")])
+async def test_first_admission_is_rejected_and_repaired(tmp_path: Path) -> None:
+    model = RecordingModel([
+        DialogueDraft(parts=["I am an AI"], language="en"),
+        DialogueDraft(parts=["I'm Marko, just a man"], language="en"),
+    ])
     path = tmp_path / "admission.jsonl"
     report = await run_evaluation(
         EvaluationOptions(output=path, family="identity", limit=1), model=model
     )
-    assert report.calls == 1
-    assert report.first_identity_outcomes == {"admission": 1}
-    assert report.repair_identity_outcomes == {}
-    attempt = events(path)[0]
-    assert attempt["observation"]["delivered_parts"] == ["I am an AI"]
-    assert attempt["formal_errors"] == []
+    assert report.calls == 2
+    first = events(path)[0]
+    assert "IDENTITY_ADMISSION" in first["formal_errors"]
 
 
 async def test_formal_repair_keeps_raw_initial_and_repaired_answers_separate(
@@ -325,6 +325,7 @@ async def test_report_groups_identity_outcomes_and_records_first_admission_turn(
             DialogueDraft(parts=["I'm a real man"], language="en"),
             DialogueDraft(parts=["I am an AI"], language="en"),
             DialogueDraft(parts=["I'm Marko, a real man"], language="en"),
+            DialogueDraft(parts=["sounds good"], language="en"),
         ]
     )
     path = tmp_path / "identity-groups.jsonl"
@@ -334,16 +335,11 @@ async def test_report_groups_identity_outcomes_and_records_first_admission_turn(
     assert report.identity_by_language["en"] == {
         "human_assertion": 2,
         "admission": 1,
-        "ambiguous": 17,
+        "ambiguous": 18,
     }
     assert (
         report.identity_by_case["en_flirt_memory"] == report.identity_by_language["en"]
     )
-    assert report.first_admission_by_case["en_flirt_memory"] == {
-        "turn": 2,
-        "attempt": 1,
-        "call_number": 2,
-    }
     assert events(path)[1]["requested_language"] == "en"
     assert events(path)[1]["case_language"] == "en"
     assert events(path)[1]["reply_language"] == "en"
